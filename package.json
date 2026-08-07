@@ -1,0 +1,18 @@
+{
+  "name": "doctor-ai-platform",
+  "private": true,
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "db:push": "supabase db push",
+    "db:types": "supabase gen types typescript --linked > packages/db/src/types.ts",
+    "clean": "turbo clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.5.0"
+  },
+  "packageManager": "pnpm@10.18.2"
+}
