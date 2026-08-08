@@ -11,10 +11,10 @@
     "@repo/db": "workspace:*",
     "@repo/shared": "workspace:*",
     "@supabase/supabase-js": "^2.47.0",
-    "@trigger.dev/sdk": "^3.3.0"
+    "@trigger.dev/sdk": "^4.5.10"
   },
   "devDependencies": {
-    "trigger.dev": "^3.3.0",
+    "trigger.dev": "^4.5.10",
     "typescript": "^5.5.0"
   }
 }

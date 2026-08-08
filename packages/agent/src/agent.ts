@@ -1,4 +1,4 @@
-import { openai } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText, isStepCount } from "ai";
 import { createReadEmailsTool, createSendEmailTool } from "./tools/gmail";
 import { createReadCalendarTool, createCreateEventTool } from "./tools/calendar";
@@ -6,14 +6,16 @@ import { createSearchDriveTool } from "./tools/drive";
 import { createReadSheetTool } from "./tools/sheets";
 import type { AgentContext } from "./context";
 
+const opencode = createOpenAICompatible({
+  name: "opencode",
+  baseURL: "https://opencode.ai/zen/go/v1",
+  headers: {
+    Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+  },
+});
+
 function getModel() {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "AI model not configured. Set OPENAI_API_KEY environment variable."
-    );
-  }
-  return openai("gpt-4o");
+  return opencode("deepseek-v4-flash");
 }
 
 const SYSTEM_PROMPT = `You are a doctor's personal AI assistant connected to their Google account (Gmail, Calendar, Sheets, Drive).

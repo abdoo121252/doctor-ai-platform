@@ -4,14 +4,17 @@ import type { AgentContext } from "@repo/agent";
 import { createClient } from "@supabase/supabase-js";
 import { createTriggerApprovalHandler } from "../approval-handler";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!
-);
+function getSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_KEY!
+  );
+}
 
 export const onNewEmail = task({
   id: "doctor-on-new-email",
   run: async (payload: { doctorId: string; eventSource: string; eventData?: unknown }) => {
+    const supabase = getSupabase();
     const { doctorId, eventSource, eventData } = payload;
 
     const { data: triggers, error } = await supabase

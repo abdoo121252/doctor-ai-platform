@@ -3,6 +3,8 @@ import { createServerSupabase } from "@/lib/supabase-server";
 import { generateChatResponse } from "@repo/agent";
 import type { AgentContext } from "@repo/agent";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(request: Request) {
   try {
     const supabase = await createServerSupabase();

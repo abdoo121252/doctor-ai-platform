@@ -4,15 +4,19 @@ import type { AgentContext } from "@repo/agent";
 import { createClient } from "@supabase/supabase-js";
 import { createTriggerApprovalHandler } from "../approval-handler";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!
-);
+function getSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_KEY!
+  );
+}
 
 export const scheduledAgentSession = schedules.task({
   id: "doctor-scheduled-session",
   cron: "0 8 * * *",
   run: async () => {
+    const supabase = getSupabase();
+
     // Load all enabled scheduled tasks across all doctors
     const { data: tasks, error } = await supabase
       .from("scheduled_tasks")
