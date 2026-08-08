@@ -1,8 +1,28 @@
-import { createServerSupabase } from "@/lib/supabase-server";
+import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function middleware(request: NextRequest) {
-  const supabase = await createServerSupabase();
+  let response = NextResponse.next();
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(
+          cookiesToSet: { name: string; value: string; options: Record<string, unknown> }[]
+        ) {
+          for (const { name, value, options } of cookiesToSet) {
+            response.cookies.set(name, value, options);
+          }
+        },
+      },
+    }
+  );
+
   const { data: { session } } = await supabase.auth.getSession();
 
   // Public routes
@@ -12,15 +32,18 @@ export async function middleware(request: NextRequest) {
   );
 
   if (!session && !isPublicPath) {
-    const redirectUrl = new URL("/login", request.url);
-    return NextResponse.redirect(redirectUrl);
+    const redirect = NextResponse.redirect(new URL("/login", request.url));
+    response.cookies.getAll().forEach((c) => redirect.cookies.set(c.name, c.value));
+    return redirect;
   }
 
   if (session && request.nextUrl.pathname === "/login") {
-    return NextResponse.redirect(new URL("/chat", request.url));
+    const redirect = NextResponse.redirect(new URL("/chat", request.url));
+    response.cookies.getAll().forEach((c) => redirect.cookies.set(c.name, c.value));
+    return redirect;
   }
 
-  return NextResponse.next();
+  return response;
 }
 
 export const config = {
