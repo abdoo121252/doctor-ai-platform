@@ -1,4 +1,4 @@
-import { createServerSupabase } from "@/lib/supabase-server";
+import { createReadOnlySupabase } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 
@@ -9,7 +9,7 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createServerSupabase();
+  const supabase = await createReadOnlySupabase();
   const { data: { session } } = await supabase.auth.getSession();
 
   if (!session) {
