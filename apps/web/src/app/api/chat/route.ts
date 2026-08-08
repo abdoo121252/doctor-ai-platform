@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase-server";
-import { generateChatResponse } from "@repo/agent";
+import { generateChatResponse, logError, logInfo } from "@repo/agent";
 import type { AgentContext } from "@repo/agent";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +24,7 @@ export async function POST(request: Request) {
     }
 
     const doctorId = auth.user.id;
+    logInfo("chat", `Processing message`, doctorId, { sessionType, msgLen: message.length });
 
     const { data: history } = await supabase
       .from("conversations")
@@ -49,7 +50,7 @@ export async function POST(request: Request) {
 
     const response = await generateChatResponse({ context, messages });
 
-    await supabase.from("conversations").insert([
+    const { error: insertError } = await supabase.from("conversations").insert([
       { doctor_id: doctorId, session_type: sessionType, role: "user", content: message },
       {
         doctor_id: doctorId,
@@ -59,11 +60,18 @@ export async function POST(request: Request) {
       },
     ]);
 
+    if (insertError) {
+      logError("chat", "Failed to save conversation", insertError, doctorId);
+    } else {
+      logInfo("chat", "Conversation saved", doctorId, { steps: response.steps?.length ?? 0 });
+    }
+
     return NextResponse.json({
       text: response.text,
       steps: response.steps,
     });
   } catch (error) {
+    logError("chat", "Chat request failed", error);
     console.error("[Chat API] Error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Internal error" },

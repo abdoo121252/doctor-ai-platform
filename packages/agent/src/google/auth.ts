@@ -1,6 +1,7 @@
 import { OAuth2Client } from "google-auth-library";
 import { createClient } from "@supabase/supabase-js";
 import { decryptRefreshToken } from "./encryption";
+import { logInfo, logError, logWarn } from "../logger";
 
 const scopes = [
   "https://www.googleapis.com/auth/gmail.modify",
@@ -26,25 +27,48 @@ export function createOAuthClient(): OAuth2Client {
 
 export function getOAuthUrl(): string {
   const client = createOAuthClient();
-  return client.generateAuthUrl({
+  const url = client.generateAuthUrl({
     access_type: "offline",
     scope: scopes,
     prompt: "consent",
   });
+  logInfo("google-auth", "OAuth URL generated");
+  return url;
 }
 
 export async function exchangeCodeForTokens(
   code: string
 ): Promise<{ refreshToken: string; accessToken: string }> {
-  const client = createOAuthClient();
-  const { tokens } = await client.getToken(code);
-  if (!tokens.refresh_token) {
-    throw new Error("No refresh token returned. Re-authorize with prompt=consent.");
+  try {
+    const client = createOAuthClient();
+    logInfo("google-auth", "Exchanging authorization code for tokens", undefined, {
+      codePreview: code.slice(0, 10) + "...",
+    });
+
+    const { tokens } = await client.getToken(code);
+
+    if (!tokens.refresh_token) {
+      logWarn("google-auth", "No refresh token in response", undefined, {
+        hasAccessToken: !!tokens.access_token,
+        hasIdToken: !!tokens.id_token,
+        tokenType: tokens.token_type,
+      });
+      throw new Error("No refresh token returned. Re-authorize with prompt=consent.");
+    }
+
+    logInfo("google-auth", "Token exchange successful", undefined, {
+      hasAccessToken: !!tokens.access_token,
+      hasIdToken: !!tokens.id_token,
+    });
+
+    return {
+      refreshToken: tokens.refresh_token,
+      accessToken: tokens.access_token ?? "",
+    };
+  } catch (err) {
+    logError("google-auth", "Token exchange failed", err);
+    throw err;
   }
-  return {
-    refreshToken: tokens.refresh_token,
-    accessToken: tokens.access_token ?? "",
-  };
 }
 
 function createSupabase() {
@@ -57,25 +81,41 @@ function createSupabase() {
 export async function getGoogleAuth(
   doctorId: string
 ): Promise<OAuth2Client> {
-  const supabase = createSupabase();
-  const { data, error } = await supabase
-    .from("google_connections")
-    .select("refresh_token_encrypted")
-    .eq("doctor_id", doctorId)
-    .eq("status", "active")
-    .single();
+  try {
+    const supabase = createSupabase();
+    const { data, error } = await supabase
+      .from("google_connections")
+      .select("refresh_token_encrypted")
+      .eq("doctor_id", doctorId)
+      .eq("status", "active")
+      .single();
 
-  if (error || !data) {
-    throw new Error(
-      `No active Google connection for doctor ${doctorId}. Connect in Settings.`
-    );
+    if (error || !data) {
+      logWarn("google-auth", "No active Google connection", doctorId, {
+        dbError: error?.message ?? null,
+      });
+      throw new Error(
+        `No active Google connection for doctor ${doctorId}. Connect in Settings.`
+      );
+    }
+
+    const row = data as { refresh_token_encrypted: string };
+    const refreshToken = decryptRefreshToken(row.refresh_token_encrypted);
+    const client = createOAuthClient();
+    client.setCredentials({ refresh_token: refreshToken });
+
+    logInfo("google-auth", "Refreshing access token", doctorId);
+    const accessTokenResponse = await client.getAccessToken();
+
+    if (!accessTokenResponse.token) {
+      logError("google-auth", "Failed to get access token", null, doctorId);
+      throw new Error("Failed to refresh access token");
+    }
+
+    logInfo("google-auth", "Google auth client ready", doctorId);
+    return client;
+  } catch (err) {
+    logError("google-auth", "getGoogleAuth failed", err, doctorId);
+    throw err;
   }
-
-  const row = data as { refresh_token_encrypted: string };
-  const refreshToken = decryptRefreshToken(row.refresh_token_encrypted);
-  const client = createOAuthClient();
-  client.setCredentials({ refresh_token: refreshToken });
-  await client.getAccessToken();
-
-  return client;
 }
