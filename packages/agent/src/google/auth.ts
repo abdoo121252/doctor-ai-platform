@@ -1,7 +1,7 @@
 import { OAuth2Client } from "google-auth-library";
 import { createClient } from "@supabase/supabase-js";
 import { decryptRefreshToken } from "./encryption";
-import { logInfo, logError, logWarn } from "../logger";
+import { logInfo, logError, logWarn, logWithClient } from "../logger";
 
 const scopes = [
   "https://www.googleapis.com/auth/gmail.modify",
@@ -79,10 +79,12 @@ function createSupabase() {
 }
 
 export async function getGoogleAuth(
-  doctorId: string
+  doctorId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabaseClient?: any
 ): Promise<OAuth2Client> {
   try {
-    const supabase = createSupabase();
+    const supabase = supabaseClient ?? createSupabase();
     const { data, error } = await supabase
       .from("google_connections")
       .select("refresh_token_encrypted")
@@ -91,12 +93,13 @@ export async function getGoogleAuth(
       .single();
 
     if (error || !data) {
-      logWarn("google-auth", "No active Google connection", doctorId, {
-        dbError: error?.message ?? null,
-      });
-      throw new Error(
-        `No active Google connection for doctor ${doctorId}. Connect in Settings.`
-      );
+      const msg = `No active Google connection for doctor ${doctorId}`;
+      const details = { dbError: error?.message ?? null, usingOwnClient: !!supabaseClient };
+      logWarn("google-auth", msg, doctorId, details);
+      if (supabaseClient) {
+        await logWithClient(supabaseClient, { level: "warn", source: "google-auth", message: msg, doctor_id: doctorId, details });
+      }
+      throw new Error(`${msg}. Connect in Settings.`);
     }
 
     const row = data as { refresh_token_encrypted: string };
@@ -108,8 +111,12 @@ export async function getGoogleAuth(
     const accessTokenResponse = await client.getAccessToken();
 
     if (!accessTokenResponse.token) {
-      logError("google-auth", "Failed to get access token", null, doctorId);
-      throw new Error("Failed to refresh access token");
+      const msg = "Failed to refresh access token";
+      logError("google-auth", msg, null, doctorId);
+      if (supabaseClient) {
+        await logWithClient(supabaseClient, { level: "error", source: "google-auth", message: msg, doctor_id: doctorId });
+      }
+      throw new Error(msg);
     }
 
     logInfo("google-auth", "Google auth client ready", doctorId);

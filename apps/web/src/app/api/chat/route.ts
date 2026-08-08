@@ -52,6 +52,7 @@ export async function POST(request: Request) {
     const context: AgentContext = {
       doctorId,
       sessionType: sessionType as "chat" | "cron" | "event",
+      supabase,
     };
 
     const response = await generateChatResponse({ context, messages });

@@ -16,7 +16,7 @@ export function createReadSheetTool(ctx: AgentContext) {
         .describe("Cell range to read (e.g. A1:D10)"),
     }),
     execute: async ({ spreadsheetId, range }) => {
-      return getSheetValues(ctx.doctorId, spreadsheetId, range ?? "A1:Z100");
+      return getSheetValues(ctx.doctorId, spreadsheetId, range ?? "A1:Z100", ctx.supabase);
     },
   });
 }

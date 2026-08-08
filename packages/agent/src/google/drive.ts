@@ -1,8 +1,14 @@
 import { google } from "googleapis";
 import { getGoogleAuth } from "./auth";
 
-export async function searchFiles(doctorId: string, query: string, maxResults: number) {
-  const auth = await getGoogleAuth(doctorId);
+export async function searchFiles(
+  doctorId: string,
+  query: string,
+  maxResults: number,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabaseClient?: any
+) {
+  const auth = await getGoogleAuth(doctorId, supabaseClient);
   const drive = google.drive({ version: "v3", auth });
 
   const res = await drive.files.list({

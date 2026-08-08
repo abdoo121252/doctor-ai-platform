@@ -1,8 +1,14 @@
 import { google } from "googleapis";
 import { getGoogleAuth } from "./auth";
 
-export async function listEvents(doctorId: string, days: number, maxResults: number) {
-  const auth = await getGoogleAuth(doctorId);
+export async function listEvents(
+  doctorId: string,
+  days: number,
+  maxResults: number,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabaseClient?: any
+) {
+  const auth = await getGoogleAuth(doctorId, supabaseClient);
   const calendar = google.calendar({ version: "v3", auth });
 
   const now = new Date();
@@ -39,9 +45,11 @@ export async function insertEvent(
   start: string,
   end: string,
   attendees?: string[],
-  description?: string
+  description?: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabaseClient?: any
 ) {
-  const auth = await getGoogleAuth(doctorId);
+  const auth = await getGoogleAuth(doctorId, supabaseClient);
   const calendar = google.calendar({ version: "v3", auth });
 
   const res = await calendar.events.insert({

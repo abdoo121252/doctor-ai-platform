@@ -11,7 +11,7 @@ export function createSearchDriveTool(ctx: AgentContext) {
       maxResults: z.number().default(10).describe("Maximum number of results"),
     }),
     execute: async ({ query, maxResults }) => {
-      return searchFiles(ctx.doctorId, query, maxResults ?? 10);
+      return searchFiles(ctx.doctorId, query, maxResults ?? 10, ctx.supabase);
     },
   });
 }

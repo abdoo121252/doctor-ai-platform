@@ -1,8 +1,14 @@
 import { google } from "googleapis";
 import { getGoogleAuth } from "./auth";
 
-export async function listMessages(doctorId: string, maxResults: number, query?: string) {
-  const auth = await getGoogleAuth(doctorId);
+export async function listMessages(
+  doctorId: string,
+  maxResults: number,
+  query?: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabaseClient?: any
+) {
+  const auth = await getGoogleAuth(doctorId, supabaseClient);
   const gmail = google.gmail({ version: "v1", auth });
 
   const res = await gmail.users.messages.list({
@@ -44,9 +50,11 @@ export async function sendMessage(
   doctorId: string,
   to: string,
   subject: string,
-  body: string
+  body: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabaseClient?: any
 ) {
-  const auth = await getGoogleAuth(doctorId);
+  const auth = await getGoogleAuth(doctorId, supabaseClient);
   const gmail = google.gmail({ version: "v1", auth });
 
   const email = [

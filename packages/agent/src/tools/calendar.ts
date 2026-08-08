@@ -11,7 +11,7 @@ export function createReadCalendarTool(ctx: AgentContext) {
       maxResults: z.number().default(10).describe("Maximum number of events"),
     }),
     execute: async ({ days, maxResults }) => {
-      return listEvents(ctx.doctorId, days ?? 7, maxResults ?? 10);
+      return listEvents(ctx.doctorId, days ?? 7, maxResults ?? 10, ctx.supabase);
     },
   });
 }
@@ -50,7 +50,8 @@ export function createCreateEventTool(ctx: AgentContext) {
         input.start,
         input.end,
         input.attendees,
-        input.description
+        input.description,
+        ctx.supabase
       );
     },
   });
