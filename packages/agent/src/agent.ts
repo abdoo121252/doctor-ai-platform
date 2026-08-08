@@ -1,4 +1,4 @@
-import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText, isStepCount } from "ai";
 import { createReadEmailsTool, createSendEmailTool } from "./tools/gmail";
 import { createReadCalendarTool, createCreateEventTool } from "./tools/calendar";
@@ -6,9 +6,10 @@ import { createSearchDriveTool } from "./tools/drive";
 import { createReadSheetTool } from "./tools/sheets";
 import type { AgentContext } from "./context";
 
-const opencode = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+const opencode = createOpenAICompatible({
+  name: "opencode",
   baseURL: "https://opencode.ai/zen/go/v1",
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 function getModel() {
