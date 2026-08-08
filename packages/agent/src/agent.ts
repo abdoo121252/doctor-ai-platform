@@ -12,7 +12,7 @@ const opencode = createOpenAI({
 });
 
 function getModel() {
-  return opencode("deepseek-v4-flash");
+  return opencode("mimo-v2.5");
 }
 
 const SYSTEM_PROMPT = `You are a doctor's personal AI assistant connected to their Google account (Gmail, Calendar, Sheets, Drive).
