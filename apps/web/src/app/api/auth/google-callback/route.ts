@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase-server";
-import { exchangeCodeForTokens, encryptRefreshToken, logInfo, logError } from "@repo/agent";
+import { exchangeCodeForTokens, encryptRefreshToken, logWithClient } from "@repo/agent";
 
 export const dynamic = "force-dynamic";
 
@@ -9,25 +9,43 @@ export async function GET(request: NextRequest) {
     const supabase = await createServerSupabase();
     const { data: auth } = await supabase.auth.getUser();
     if (!auth.user) {
-      logWarn_("google-callback", "User not authenticated, redirecting to login");
+      await logWithClient(supabase, {
+        level: "warn",
+        source: "google-callback",
+        message: "User not authenticated, redirecting to login",
+      });
       return NextResponse.redirect(new URL("/login", request.url));
     }
 
     const code = request.nextUrl.searchParams.get("code");
     if (!code) {
-      logError("google-callback", "No code in callback", null, auth.user.id);
+      await logWithClient(supabase, {
+        level: "error",
+        source: "google-callback",
+        message: "No authorization code received",
+        doctor_id: auth.user.id,
+      });
       return NextResponse.redirect(
         new URL("/settings?error=missing-code", request.url)
       );
     }
 
-    logInfo("google-callback", "Exchanging code for tokens", auth.user.id);
+    await logWithClient(supabase, {
+      level: "info",
+      source: "google-callback",
+      message: "Exchanging authorization code for tokens",
+      doctor_id: auth.user.id,
+    });
 
     const { refreshToken } = await exchangeCodeForTokens(code);
     const encrypted = encryptRefreshToken(refreshToken);
 
-    logInfo("google-callback", "Saving encrypted token to DB", auth.user.id, {
-      tokenLength: encrypted.length,
+    await logWithClient(supabase, {
+      level: "info",
+      source: "google-callback",
+      message: "Saving encrypted token to DB",
+      doctor_id: auth.user.id,
+      details: { tokenLength: encrypted.length },
     });
 
     const { error } = await supabase
@@ -43,23 +61,30 @@ export async function GET(request: NextRequest) {
       );
 
     if (error) {
-      logError("google-callback", "DB upsert failed", error, auth.user.id);
+      await logWithClient(supabase, {
+        level: "error",
+        source: "google-callback",
+        message: "DB upsert failed",
+        doctor_id: auth.user.id,
+        details: { code: error.code, message: error.message, hint: error.hint },
+      });
       return NextResponse.redirect(
         new URL("/settings?error=db-write-failed", request.url)
       );
     }
 
-    logInfo("google-callback", "Google connection saved successfully", auth.user.id);
+    await logWithClient(supabase, {
+      level: "info",
+      source: "google-callback",
+      message: "Google connection saved successfully",
+      doctor_id: auth.user.id,
+    });
+
     return NextResponse.redirect(new URL("/settings?connected=1", request.url));
   } catch (err) {
-    logError("google-callback", "OAuth flow failed", err);
     console.error("[Google Callback] Error:", err);
     return NextResponse.redirect(
       new URL("/settings?error=oauth-failed", request.url)
     );
   }
-}
-
-function logWarn_(source: string, msg: string) {
-  console.warn(`[${source}]`, msg);
 }

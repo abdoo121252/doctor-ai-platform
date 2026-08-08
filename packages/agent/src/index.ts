@@ -5,4 +5,5 @@ export type { AgentContext } from "./context";
 export { getOAuthUrl, exchangeCodeForTokens } from "./google/auth";
 export { encryptRefreshToken, decryptRefreshToken } from "./google/encryption";
 
-export { log, logInfo, logWarn, logError } from "./logger";
+export { log, logWithClient, logInfo, logWarn, logError } from "./logger";
+export type { LogEntry } from "./logger";
