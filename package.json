@@ -10,7 +10,8 @@
     "db:types": "supabase gen types typescript --linked > packages/db/src/types.ts",
     "clean": "turbo clean && rm -rf node_modules",
     "test:agent": "tsx scripts/test-agent.ts",
-    "test:api": "tsx scripts/test-api.ts"
+    "test:api": "tsx scripts/test-api.ts",
+    "test:chat": "tsx scripts/test-chat.ts"
   },
   "devDependencies": {
     "dotenv": "^17.4.2",

@@ -86,7 +86,6 @@ async function main() {
   if (only === "all" || only === "events") await testEvents(authCookie);
   if (only === "all" || only === "approvals") await testApprovals(authCookie);
   if (only === "all" || only === "logs") await testLogs(authCookie);
-  if (only === "all" || only === "chat") await testChat(authCookie);
 
   console.log(`\n=== RESULT: ${passed} passed, ${failed} failed ===`);
   process.exit(failed > 0 ? 1 : 0);
@@ -271,42 +270,6 @@ async function testLogs(authCookie: string) {
   const allErrors = (errs.json.logs ?? []).every((l: { level: string }) => l.level === "error");
   if (errs.status === 200 && allErrors) ok("GET /api/logs?level=error filters correctly");
   else bad("GET /api/logs?level=error filters correctly", `got ${errs.status}`);
-}
-
-async function testChat(authCookie: string) {
-  console.log("\n--- Chat (agent) ---");
-  const res = await call("", "POST", "/api/chat", {
-    cookie: authCookie,
-    body: {
-      message: "Read my latest 2 emails and summarize them in one line each",
-      sessionType: "chat",
-    },
-  });
-  if (res.status === 200 && res.json.text) {
-    ok("POST /api/chat returns agent reply");
-    console.log("  TEXT:", String(res.json.text).replace(/\n/g, " ").slice(0, 220));
-    const tools = (res.json.steps ?? []).flatMap((s: any) => s.toolCalls ?? []);
-    if (tools.length > 0) {
-      ok(`agent used tools: ${tools.map((t: any) => t.toolName).join(", ")}`);
-    } else {
-      ok("agent replied (no tool calls this time)");
-    }
-
-    const service = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-    const doctorId = (globalThis as any).__DOCTOR_ID as string;
-    const { data: history, error: hErr } = await service
-      .from("conversations")
-      .select("role, content")
-      .eq("doctor_id", doctorId)
-      .order("created_at", { ascending: false })
-      .limit(4);
-    const hasUser = (history ?? []).some((m: { role: string }) => m.role === "user");
-    const hasAssistant = (history ?? []).some((m: { role: string }) => m.role === "assistant");
-    if (!hErr && hasUser && hasAssistant) ok("conversation persisted to DB (user + assistant rows)");
-    else bad("conversation persisted to DB", hErr?.message);
-  } else {
-    bad("POST /api/chat", `status ${res.status} ${JSON.stringify(res.json).slice(0, 200)}`);
-  }
 }
 
 main().catch((err) => {
