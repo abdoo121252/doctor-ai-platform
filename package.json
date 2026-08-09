@@ -10,10 +10,12 @@
     "db:types": "supabase gen types typescript --linked > packages/db/src/types.ts",
     "clean": "turbo clean && rm -rf node_modules",
     "test:agent": "tsx scripts/test-agent.ts",
-    "test:api": "tsx scripts/test-api.ts"
+    "test:api": "tsx scripts/test-api.ts",
+    "test:ui": "tsx scripts/test-ui.ts"
   },
   "devDependencies": {
     "dotenv": "^17.4.2",
+    "playwright": "^1.62.1",
     "tsx": "^4.23.11",
     "turbo": "^2.3.0",
     "typescript": "^5.5.0",
