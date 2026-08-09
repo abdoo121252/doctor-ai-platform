@@ -15,3 +15,6 @@ supabase/.temp/
 # IDE
 .vscode/
 .idea/
+
+# Local dev logs
+logs/

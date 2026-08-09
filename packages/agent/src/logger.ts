@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@supabase/supabase-js";
+import { appendFileSync, existsSync, mkdirSync } from "fs";
+import { join } from "path";
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -9,6 +11,20 @@ export interface LogEntry {
   source: string;
   message: string;
   details?: Record<string, unknown>;
+}
+
+const LOG_DIR = join(process.cwd(), "logs");
+const LOG_FILE = join(LOG_DIR, "local-dev.log");
+
+function writeLocalLog(entry: LogEntry) {
+  const ts = new Date().toISOString();
+  const line = JSON.stringify({ ts, ...entry }) + "\n";
+  try {
+    if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
+    appendFileSync(LOG_FILE, line);
+  } catch {
+    // never crash on log write
+  }
 }
 
 let _serviceSupabase: ReturnType<typeof createClient> | null | undefined;
@@ -36,7 +52,11 @@ async function tryInsert(client: SupabaseClient, entry: LogEntry) {
 export async function log(entry: LogEntry) {
   const { level, source, message, details } = entry;
 
-  console.log(`[${level.toUpperCase()}] [${source}] ${message}`, details ?? "");
+  const prefix = level === "error" ? "[ERROR]" : level === "warn" ? "[WARN]" : "[INFO]";
+  const dId = entry.doctor_id ? ` (${entry.doctor_id.slice(0, 8)})` : "";
+  console.log(`${prefix} [${source}]${dId} ${message}`, details ?? "");
+
+  writeLocalLog(entry);
 
   const serviceClient = getServiceSupabase();
   if (!serviceClient) return;
@@ -51,7 +71,11 @@ export async function log(entry: LogEntry) {
 export async function logWithClient(client: SupabaseClient, entry: LogEntry) {
   const { level, source, message, details } = entry;
 
-  console.log(`[${level.toUpperCase()}] [${source}] ${message}`, details ?? "");
+  const prefix = level === "error" ? "[ERROR]" : level === "warn" ? "[WARN]" : "[INFO]";
+  const dId = entry.doctor_id ? ` (${entry.doctor_id.slice(0, 8)})` : "";
+  console.log(`${prefix} [${source}]${dId} ${message}`, details ?? "");
+
+  writeLocalLog(entry);
 
   try {
     await tryInsert(client, entry);

@@ -8,11 +8,16 @@
     "typecheck": "turbo typecheck",
     "db:push": "supabase db push",
     "db:types": "supabase gen types typescript --linked > packages/db/src/types.ts",
-    "clean": "turbo clean && rm -rf node_modules"
+    "clean": "turbo clean && rm -rf node_modules",
+    "test:agent": "tsx scripts/test-agent.ts",
+    "test:api": "tsx scripts/test-api.ts"
   },
   "devDependencies": {
+    "dotenv": "^17.4.2",
+    "tsx": "^4.23.11",
     "turbo": "^2.3.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "ws": "^8.21.3"
   },
   "packageManager": "pnpm@10.18.2"
 }
