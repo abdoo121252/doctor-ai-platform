@@ -2,19 +2,20 @@
 
 ## Stack
 - **Framework:** Next.js 14+ (App Router) with Tailwind CSS + shadcn/ui components
-- **Execution:** Trigger.dev v3 (serverless tasks, `wait.createToken` for approvals)
-- **Agent:** Mastra (`@mastra/core`) — dynamic agent sessions, no pre-scripted workflows
+- **Execution:** Trigger.dev v3 (serverless tasks) — approval uses polling, NOT `wait.createToken` (see rule 6)
+- **Agent:** `ai` SDK v7 (`generateText` + `generateChatResponse()` in `packages/agent/src/agent.ts`) — dynamic agent sessions, no pre-scripted workflows. Model: `mimo-v2.5` via `https://opencode.ai/zen/go/v1`
 - **Database:** Supabase (Postgres) with RLS on every `doctor_id`-scoped table
 - **Auth:** Supabase Auth (Google OAuth for login — separate from Google API OAuth in Phase 5)
-- **Google API tokens:** Stored encrypted in Supabase (Vault or app-level encryption). Single Trigger.dev project for all doctors — each task fetches its doctor's token at runtime.
+- **Google API tokens:** Stored encrypted in Supabase (app-level encryption via `GOOGLE_ENCRYPTION_KEY`). Single Trigger.dev project for all doctors — each task fetches its doctor's token at runtime.
+- **Logger:** `packages/agent/src/logger.ts` — `log()`/`logWithClient()` write to Supabase `logs` table AND a local file `logs/local-dev.log` (JSON lines).
 
 ## Monorepo layout
 ```
 doctor-ai-platform/
 ├── apps/web/          # Next.js dashboard (App Router)
-├── apps/worker/       # Trigger.dev tasks (Mastra agent runs inside)
+├── apps/worker/       # Trigger.dev tasks (agent runs inside)
 ├── packages/db/       # Supabase client, types, Zod schemas
-├── packages/agent/    # Mastra agent + tool definitions
+├── packages/agent/    # AI agent (ai SDK) + tool definitions
 ├── packages/shared/   # Types, constants (SessionType, ApprovalStatus, etc.)
 └── supabase/          # Migrations
 ```
@@ -30,6 +31,34 @@ pnpm db:types     # regenerate DB types from live Supabase into packages/db/src/
 ```
 
 Run a single workspace: `pnpm --filter @apps/web dev` or `pnpm --filter @repo/db exec tsc --noEmit`
+
+## Local development (NO push to GitHub needed)
+- **Start the web app:** `npx next dev --port 3000` from `apps/web/`. The `trigger.dev` worker needs its CLI and is NOT required for web dev.
+- **Env for local:** `apps/web/.env.local` (gitignored) overrides `.env` for local. It MUST contain `NEXT_PUBLIC_SITE_URL=http://localhost:3000`, `GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/google-callback`, plus the Supabase/Google/AI keys (`.env.local` is the single source of truth for the local server — root `.env` is NOT read by `next dev`).
+- **One-time external setup for local auth to work:**
+  1. Supabase Dashboard → Authentication → URL Configuration → Redirect URLs: add `http://localhost:3000/api/auth/callback`
+  2. Google Cloud Console → OAuth Client ID → Authorized redirect URIs: add `http://localhost:3000/api/auth/google-callback` (keep the Vercel one too)
+- **Local log file:** every `log*()` call appends a JSON line to `logs/local-dev.log` (gitignored). Read it to debug without touching Supabase.
+- Changes hot-reload on save. Deploy to production by pushing to GitHub (Vercel auto-deploys).
+
+## Testing (test the feature through its API, not the browser)
+Every UI button calls an API endpoint, so tests hit the real endpoints with an auth cookie — no browser needed. The auth cookie is built from a real Supabase password sign-in using the **test user**.
+
+**Test user:** `test.doctor.local@example.com` / `TestDoctor123!` (Supabase auth user `3a8f5d9f-d667-4494-a044-11252eaff411`). Has a `doctors` row + an active `google_connections` row (same Google account as the real user). Created via `supabase.auth.admin.createUser` + service-key inserts. RLS works because `auth.uid()` matches the doctor id.
+
+```bash
+pnpm test:agent    # direct Google tool calls (gmail/calendar/drive/sheets) — bypasses HTTP
+pnpm test:api      # endpoint checks: auth, settings/oauth URL, tasks/events CRUD, approvals, logs. NO chat.
+pnpm test:chat     # INTERACTIVE conversation with the agent via POST /api/chat (multi-turn). 
+                   #   pnpm test:chat              → default 3-turn scenario
+                   #   pnpm test:chat "your msg"   → single custom message
+                   #   pnpm test:chat -n 5 "msg"   → repeat 5 times
+```
+
+- To add a feature: build it, then extend the matching script and run it (feature is verified from the API output before pushing).
+- `scripts/` run via `tsx` (root devDependency). `scripts/lib/config.ts` loads `apps/web/.env.local`. `scripts/lib/polyfill.ts` polyfills `globalThis.WebSocket` with `ws` (required because Node 20 has no native WebSocket and `@supabase/supabase-js` v2.112 needs it).
+- `scripts/test-agent.ts` creates its Supabase client with a service-key header via `global.headers` so RLS is bypassed (it tests agent internals, not auth). `scripts/test-api.ts` + `scripts/test-chat.ts` sign in as the test user and use the real `sb-<project-ref>-auth-token` cookie.
+- Chat route (`apps/web/src/app/api/chat/route.ts`) passes the authenticated Supabase client through `AgentContext.supabase` so `getGoogleAuth()` reads `google_connections` WITHOUT needing `SUPABASE_SERVICE_KEY`. Do not regress this — it is why tools work locally.
 
 ## Architecture rules (do NOT violate these)
 
@@ -76,12 +105,19 @@ Trigger.dev SDK v3.3.0 does not have `wait.createToken`/`forToken`/`completeToke
 | Task update API (PATCH/DELETE) | `apps/web/src/app/api/tasks/[id]/route.ts` |
 | Events list API (GET/POST) | `apps/web/src/app/api/events/route.ts` |
 | Event update API (PATCH/DELETE) | `apps/web/src/app/api/events/[id]/route.ts` |
-| Google OAuth + token mgmt | `packages/agent/src/google/auth.ts` |
+| Google OAuth + token mgmt | `packages/agent/src/google/auth.ts` (`getGoogleAuth(doctorId, supabaseClient?)` — accepts optional client, falls back to service key) |
 | Token encryption | `packages/agent/src/google/encryption.ts` |
 | Real Gmail API calls | `packages/agent/src/google/gmail.ts` |
 | Real Calendar API calls | `packages/agent/src/google/calendar.ts` |
 | Real Drive API calls | `packages/agent/src/google/drive.ts` |
 | Real Sheets API calls | `packages/agent/src/google/sheets.ts` |
+| Logger (DB + local file) | `packages/agent/src/logger.ts` |
+| Local log output | `logs/local-dev.log` (gitignored) |
+| Test config / env loader | `scripts/lib/config.ts` |
+| Node 20 WebSocket polyfill | `scripts/lib/polyfill.ts` |
+| Agent tool tests | `scripts/test-agent.ts` (`pnpm test:agent`) |
+| API endpoint tests | `scripts/test-api.ts` (`pnpm test:api`) |
+| Agent conversation test | `scripts/test-chat.ts` (`pnpm test:chat`) |
 | Google connect URL API | `apps/web/src/app/api/settings/google-connect/route.ts` |
 | Google OAuth callback | `apps/web/src/app/api/auth/google-callback/route.ts` |
 | Google connection API | `apps/web/src/app/api/settings/google-connection/route.ts` |
@@ -92,6 +128,7 @@ Trigger.dev SDK v3.3.0 does not have `wait.createToken`/`forToken`/`completeToke
 | Event task | `apps/worker/src/trigger/events.ts` |
 
 ## Phase conventions
-- **Phase 5:** All tools call real Google APIs via `googleapis` (Gmail, Calendar, Drive, Sheets). Use `getGoogleAuth(doctorId)` → fetches encrypted refresh token from `google_connections`, creates OAuth2 client, auto-refreshes tokens.
-- **Phase 5 env vars:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_ENCRYPTION_KEY` (32+ chars).
-- **AI model:** Configured via `OPENAI_API_KEY` env var. No hardcoded provider in code. The `getModel()` function in `packages/agent/src/agent.ts` is the single point to swap providers.
+- **Phase 5:** All tools call real Google APIs via `googleapis` (Gmail, Calendar, Drive, Sheets). Use `getGoogleAuth(doctorId, supabaseClient?)` → fetches encrypted refresh token from `google_connections`, creates OAuth2 client, auto-refreshes tokens. Pass the caller's Supabase client when available so it works without `SUPABASE_SERVICE_KEY`.
+- **Phase 5 env vars:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_ENCRYPTION_KEY` (must be exactly 32 chars).
+- **AI model:** `mimo-v2.5` via `createOpenAICompatible({ baseURL: "https://opencode.ai/zen/go/v1" })`, using `OPENAI_API_KEY`. The `getModel()` function in `packages/agent/src/agent.ts` is the single point to swap providers/models.
+- **Supabase clients:** `packages/db/src/server.ts` uses `SUPABASE_SERVICE_ROLE_KEY`; `packages/agent/src/google/auth.ts` and the logger use `SUPABASE_SERVICE_KEY`. `.env.local` sets both via `SUPABASE_SERVICE_KEY` (the env used by the running server).
