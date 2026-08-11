@@ -12,6 +12,7 @@ import {
   Table2,
   Loader2,
   Link,
+  ShieldCheck,
 } from "lucide-react";
 
 interface ConnectionStatus {
@@ -22,7 +23,9 @@ interface ConnectionStatus {
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [msConnecting, setMsConnecting] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus | null>(null);
+  const [msConnection, setMsConnection] = useState<ConnectionStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   const loadConnection = useCallback(async () => {
@@ -37,15 +40,33 @@ export default function SettingsPage() {
     }
   }, []);
 
+  const loadMsConnection = useCallback(async () => {
+    try {
+      const res = await fetch("/api/settings/microsoft-connection");
+      if (res.ok) {
+        const data = (await res.json()) as { connection: ConnectionStatus };
+        setMsConnection(data.connection);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadConnection();
-  }, [loadConnection]);
+    loadMsConnection();
+  }, [loadConnection, loadMsConnection]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("connected") === "1") {
       setMessage("Google account connected successfully.");
       loadConnection();
+      window.history.replaceState({}, "", "/settings");
+    }
+    if (params.get("msconnected") === "1") {
+      setMessage("Microsoft account connected successfully.");
+      loadMsConnection();
       window.history.replaceState({}, "", "/settings");
     }
     const error = params.get("error");
@@ -58,7 +79,7 @@ export default function SettingsPage() {
       setMessage(messages[error] ?? "An unknown error occurred.");
       window.history.replaceState({}, "", "/settings");
     }
-  }, [loadConnection]);
+  }, [loadConnection, loadMsConnection]);
 
   const handleConnect = async () => {
     setConnecting(true);
@@ -74,6 +95,20 @@ export default function SettingsPage() {
     }
   };
 
+  const handleMsConnect = async () => {
+    setMsConnecting(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/settings/microsoft-connect");
+      if (!res.ok) throw new Error();
+      const data = (await res.json()) as { url: string };
+      window.location.href = data.url;
+    } catch {
+      setMessage("Failed to start Microsoft connection. Check server configuration.");
+      setMsConnecting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -83,6 +118,7 @@ export default function SettingsPage() {
   }
 
   const connected = connection?.status === "active";
+  const msConnected = msConnection?.status === "active";
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -148,6 +184,85 @@ export default function SettingsPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-base">Microsoft Account Connection</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-md border bg-muted/30 p-4">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <span className="text-sm font-medium">Microsoft 365 API Access</span>
+                <p className="text-xs text-muted-foreground">
+                  Outlook Mail, Outlook Calendar, OneDrive
+                </p>
+              </div>
+              {msConnected ? (
+                <Badge>Connected</Badge>
+              ) : (
+                <Badge variant="secondary">Not Connected</Badge>
+              )}
+            </div>
+          </div>
+
+          {msConnected && msConnection?.connected_at && (
+            <p className="text-xs text-muted-foreground">
+              Connected on{" "}
+              {new Date(msConnection.connected_at).toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </p>
+          )}
+
+          <p className="text-sm text-muted-foreground">
+            Connecting your Microsoft account allows the AI assistant to read
+            Outlook emails, manage your Outlook calendar, and search/read
+            OneDrive files on your behalf. This is a separate OAuth grant from
+            your login.
+          </p>
+
+          <Button onClick={handleMsConnect} disabled={msConnecting} variant="outline">
+            {msConnecting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Link className="mr-2 h-4 w-4" />
+            )}
+            {msConnected ? "Reconnect Microsoft Account" : "Connect Microsoft Account"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Tool Approval Settings</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-md border bg-muted/30 p-4">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4" />
+                  <span className="text-sm font-medium">
+                    Sensitive tool approvals
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Choose which tools pause for your approval before running in
+                  chat (send email, create event, read files, etc.)
+                </p>
+              </div>
+            </div>
+          </div>
+          <Button onClick={() => (window.location.href = "/settings/tools")}>
+            Manage Tool Approvals
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-base">Service Status</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -159,18 +274,33 @@ export default function SettingsPage() {
             />
             <ServiceRow
               icon={<Calendar className="h-4 w-4" />}
-              name="Calendar"
+              name="Google Calendar"
               connected={connected}
             />
             <ServiceRow
               icon={<HardDrive className="h-4 w-4" />}
-              name="Drive"
+              name="Google Drive"
               connected={connected}
             />
             <ServiceRow
               icon={<Table2 className="h-4 w-4" />}
               name="Sheets"
               connected={connected}
+            />
+            <ServiceRow
+              icon={<Mail className="h-4 w-4" />}
+              name="Outlook Mail"
+              connected={msConnected}
+            />
+            <ServiceRow
+              icon={<Calendar className="h-4 w-4" />}
+              name="Outlook Calendar"
+              connected={msConnected}
+            />
+            <ServiceRow
+              icon={<HardDrive className="h-4 w-4" />}
+              name="OneDrive"
+              connected={msConnected}
             />
           </div>
         </CardContent>

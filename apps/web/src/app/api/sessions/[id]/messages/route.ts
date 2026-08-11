@@ -1,0 +1,85 @@
+import { NextResponse } from "next/server";
+import { createServerSupabase } from "@/lib/supabase-server";
+import { createTrace } from "@/lib/request-trace";
+
+export const dynamic = "force-dynamic";
+
+export async function GET(
+  _request: Request,
+  { params }: { params: { id: string } }
+) {
+  const trace = createTrace();
+  trace.phase("start", { route: "GET /api/sessions/[id]/messages", sessionId: params.id });
+  try {
+    const supabase = await createServerSupabase();
+    const { data: auth } = await supabase.auth.getUser();
+    trace.phase("auth", { authenticated: !!auth.user });
+    if (!auth.user) {
+      trace.error("Unauthorized", new Error("No auth user"));
+      trace.end({ phase: "auth", result: "unauthorized" });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    trace.phase("session-lookup");
+    const { data: session } = await supabase
+      .from("chat_sessions")
+      .select("id, title, public_access_token, last_event_id")
+      .eq("id", params.id)
+      .eq("doctor_id", auth.user.id)
+      .single();
+
+    if (!session) {
+      trace.info("session not found", { sessionId: params.id });
+      trace.end({ phase: "session-lookup", result: "not_found" });
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+    trace.info("session found", { title: session.title });
+
+    trace.phase("messages");
+    const { data: messages, error } = await supabase
+      .from("conversations")
+      .select("id, role, content, parts, created_at")
+      .eq("session_id", params.id)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      trace.error("Load messages failed", error);
+      trace.end({ phase: "messages", result: "error" });
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    const msgs = messages ?? [];
+    trace.info("messages loaded", { count: msgs.length });
+    trace.end({ phase: "complete", sessionId: params.id, count: msgs.length });
+    return NextResponse.json({
+      session: {
+        id: session.id,
+        title: session.title,
+        publicAccessToken: session.public_access_token,
+        lastEventId: session.last_event_id,
+      },
+      messages: msgs.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        createdAt: m.created_at,
+        ...(m.parts
+          ? {
+              parts:
+                typeof m.parts === "string"
+                  ? JSON.parse(m.parts)
+                  : m.parts,
+            }
+          : {}),
+      })),
+    });
+  } catch (error) {
+    trace.error("Unhandled GET /api/sessions/[id]/messages error", error);
+    trace.end({ phase: "error", result: "internal_error" });
+    console.error("[Session Messages] Error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Internal error" },
+      { status: 500 }
+    );
+  }
+}

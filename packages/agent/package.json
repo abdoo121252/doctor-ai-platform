@@ -6,7 +6,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./google/*": "./src/google/*"
+    "./google/*": "./src/google/*",
+    "./microsoft/*": "./src/microsoft/*"
   },
   "scripts": {
     "lint": "tsc --noEmit"

@@ -18,3 +18,9 @@ supabase/.temp/
 
 # Local dev logs
 logs/
+
+# Trigger.dev generated files
+.trigger/
+
+# Temp scripts
+scripts/tmp-*.ts

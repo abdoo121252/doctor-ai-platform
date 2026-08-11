@@ -55,10 +55,37 @@ export interface Database {
           last_checked_at?: string | null;
         };
       };
+      microsoft_connections: {
+        Row: {
+          id: string;
+          doctor_id: string;
+          status: string;
+          refresh_token_encrypted: string | null;
+          connected_at: string;
+          last_checked_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          doctor_id: string;
+          status?: string;
+          refresh_token_encrypted?: string | null;
+          connected_at?: string;
+          last_checked_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          doctor_id?: string;
+          status?: string;
+          refresh_token_encrypted?: string | null;
+          connected_at?: string;
+          last_checked_at?: string | null;
+        };
+      };
       conversations: {
         Row: {
           id: string;
           doctor_id: string;
+          session_id: string | null;
           session_type: string;
           role: string;
           content: string;
@@ -67,6 +94,7 @@ export interface Database {
         Insert: {
           id?: string;
           doctor_id: string;
+          session_id?: string | null;
           session_type: string;
           role: string;
           content: string;
@@ -75,10 +103,60 @@ export interface Database {
         Update: {
           id?: string;
           doctor_id?: string;
+          session_id?: string | null;
           session_type?: string;
           role?: string;
           content?: string;
           created_at?: string;
+        };
+      };
+      chat_sessions: {
+        Row: {
+          id: string;
+          doctor_id: string;
+          title: string;
+          created_at: string;
+          updated_at: string;
+          public_access_token: string | null;
+          last_event_id: string | null;
+        };
+        Insert: {
+          id?: string;
+          doctor_id: string;
+          title?: string;
+          created_at?: string;
+          updated_at?: string;
+          public_access_token?: string | null;
+          last_event_id?: string | null;
+        };
+        Update: {
+          id?: string;
+          doctor_id?: string;
+          title?: string;
+          created_at?: string;
+          updated_at?: string;
+          public_access_token?: string | null;
+          last_event_id?: string | null;
+        };
+      };
+      tool_sensitivity_settings: {
+        Row: {
+          doctor_id: string;
+          tool_name: string;
+          sensitive: boolean;
+          updated_at: string;
+        };
+        Insert: {
+          doctor_id: string;
+          tool_name: string;
+          sensitive: boolean;
+          updated_at?: string;
+        };
+        Update: {
+          doctor_id?: string;
+          tool_name?: string;
+          sensitive?: boolean;
+          updated_at?: string;
         };
       };
       approval_requests: {

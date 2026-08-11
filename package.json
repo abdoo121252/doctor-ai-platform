@@ -11,7 +11,8 @@
     "clean": "turbo clean && rm -rf node_modules",
     "test:agent": "tsx scripts/test-agent.ts",
     "test:api": "tsx scripts/test-api.ts",
-    "test:chat": "tsx scripts/test-chat.ts"
+    "test:chat": "tsx scripts/test-chat.ts",
+    "test:toolsensitivity": "tsx scripts/test-tool-sensitivity.ts"
   },
   "devDependencies": {
     "dotenv": "^17.4.2",

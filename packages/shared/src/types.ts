@@ -24,9 +24,19 @@ export interface ApprovalRequest {
   rejectionReason: string | null;
 }
 
+export interface ChatSession {
+  id: string;
+  doctorId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessage?: string;
+}
+
 export interface ChatMessage {
   id: string;
   doctorId: string;
+  sessionId?: string;
   sessionType: SessionType;
   role: "user" | "assistant" | "tool";
   content: string;

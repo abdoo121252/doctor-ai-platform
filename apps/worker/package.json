@@ -3,17 +3,21 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "dev": "trigger.dev dev",
+    "dev": "trigger dev --env-file ../../.env",
     "deploy": "trigger.dev deploy"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.27",
     "@repo/agent": "workspace:*",
     "@repo/db": "workspace:*",
     "@repo/shared": "workspace:*",
     "@supabase/supabase-js": "^2.47.0",
-    "@trigger.dev/sdk": "^4.5.10"
+    "@trigger.dev/sdk": "4.5.10",
+    "ai": "^7.0.57",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.1",
     "trigger.dev": "^4.5.10",
     "typescript": "^5.5.0"
   }

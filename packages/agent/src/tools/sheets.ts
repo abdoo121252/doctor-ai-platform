@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AgentContext } from "../context";
 import { getSheetValues } from "../google/sheets";
 
-export function createReadSheetTool(ctx: AgentContext) {
+export function createReadSheetTool(ctx: AgentContext, needsApproval = false) {
   return tool({
     description: "Read data from a Google Sheet",
     inputSchema: z.object({
@@ -15,6 +15,7 @@ export function createReadSheetTool(ctx: AgentContext) {
         .default("A1:Z100")
         .describe("Cell range to read (e.g. A1:D10)"),
     }),
+    needsApproval,
     execute: async ({ spreadsheetId, range }) => {
       return getSheetValues(ctx.doctorId, spreadsheetId, range ?? "A1:Z100", ctx.supabase);
     },

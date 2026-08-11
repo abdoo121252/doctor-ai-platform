@@ -11,17 +11,33 @@ const BASE_URL = process.env.TEST_BASE_URL ?? "http://localhost:3000";
 
 /**
  * CONVERSATION TEST
- * Talks to the agent through POST /api/chat like a human would,
- * keeping a rolling conversation history so follow-ups have context.
+ * Talks to the agent through POST /api/chat like a human would.
  *
  * Usage:
- *   pnpm test:chat                 -> default scenario
- *   pnpm test:chat "message"       -> send a single custom message
- *   pnpm test:chat -n 3 "msg"      -> repeat a message 3 times
+ *   pnpm test:chat                       -> default scenario (new session)
+ *   pnpm test:chat "message"             -> single custom message (new session)
+ *   pnpm test:chat -n 3 "msg"            -> repeat 3 times (new session)
+ *   pnpm test:chat --session-id <uuid>   -> continue existing session
+ *   pnpm test:chat --session-id <uuid> "msg" -> send to existing session
  */
 
 async function main() {
   const args = process.argv.slice(2);
+
+  let sessionId: string | null = null;
+  let scenarioArgs: string[] = [];
+
+  // parse --session-id flag
+  let i = 0;
+  while (i < args.length) {
+    if (args[i] === "--session-id" && i + 1 < args.length) {
+      sessionId = args[i + 1];
+      i += 2;
+    } else {
+      scenarioArgs.push(args[i]);
+      i++;
+    }
+  }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   const { data, error } = await supabase.auth.signInWithPassword({
@@ -50,32 +66,38 @@ async function main() {
   console.log("=== AGENT CONVERSATION TEST ===");
   console.log("User:", TEST_EMAIL);
   console.log("Endpoint: POST", `${BASE_URL}/api/chat`);
+  if (sessionId) console.log("Session:", sessionId);
   console.log("");
 
-  // Build scenario from args or use default
   let scenario: string[];
-  if (args.length === 0) {
+  if (scenarioArgs.length === 0) {
     scenario = [
       "Hello, who are you and what can you help me with?",
       "Read my latest 2 emails and summarize them.",
       "Now check my calendar for the next 7 days.",
     ];
     console.log("Scenario: (default 3-turn conversation)\n");
-  } else if (args[0] === "-n" && args.length >= 3) {
-    const n = parseInt(args[1], 10);
-    const msg = args.slice(2).join(" ");
+  } else if (scenarioArgs[0] === "-n" && scenarioArgs.length >= 3) {
+    const n = parseInt(scenarioArgs[1], 10);
+    const msg = scenarioArgs.slice(2).join(" ");
     scenario = Array.from({ length: n }, () => msg);
   } else {
-    scenario = [args.join(" ")];
+    scenario = [scenarioArgs.join(" ")];
   }
+
+  let currentSessionId = sessionId;
 
   for (const message of scenario) {
     console.log("──────────────────────────────────────────────");
     console.log(`YOU: ${message}\n`);
-    const reply = await sendMessage(authCookie, message);
+    const reply = await sendMessage(authCookie, message, currentSessionId);
     if (!reply) {
       console.log("  ❌ FAILED — no reply (see error above)\n");
       process.exit(1);
+    }
+
+    if (reply.sessionId) {
+      currentSessionId = reply.sessionId;
     }
 
     console.log(`ASSISTANT: ${reply.text}\n`);
@@ -91,31 +113,78 @@ async function main() {
     }
   }
 
+  if (currentSessionId) {
+    console.log(`Session: ${currentSessionId} (${scenario.length} turns)`);
+  }
   console.log("──────────────────────────────────────────────");
   console.log(`DONE — ${scenario.length} turn(s) completed.`);
 }
 
 async function sendMessage(
   authCookie: string,
-  message: string
-): Promise<{ text: string; steps: any[] } | null> {
+  message: string,
+  sessionId: string | null
+): Promise<{ text: string; steps: any[]; sessionId?: string } | null> {
+  const body: Record<string, unknown> = { message, sessionType: "chat" };
+  if (sessionId) {
+    body.sessionId = sessionId;
+  }
+
   const res = await fetch(`${BASE_URL}/api/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Cookie: authCookie,
     },
-    body: JSON.stringify({ message, sessionType: "chat" }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    console.log(`  ❌ HTTP ${res.status}:`, JSON.stringify(body).slice(0, 300));
+    const resBody = await res.json().catch(() => ({}));
+    console.log(`  ❌ HTTP ${res.status}:`, JSON.stringify(resBody).slice(0, 300));
     return null;
   }
 
-  const data = await res.json();
-  return { text: data.text, steps: data.steps };
+  if (!res.body) return null;
+
+  // Parse SSE stream: {type:"text"|"done"|"error", ...}
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  let steps: any[] = [];
+  let doneSessionId: string | undefined;
+  let done = false;
+
+  while (true) {
+    const { done: readerDone, value } = await reader.read();
+    if (readerDone) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+
+    for (const rawEvent of events) {
+      const line = rawEvent.split("\n").find((l) => l.startsWith("data: "));
+      if (!line) continue;
+      const data = JSON.parse(line.slice(6));
+
+      if (data.type === "text") {
+        text += data.text;
+      } else if (data.type === "error") {
+        console.log(`  ❌ Stream error: ${data.error}`);
+        return null;
+      } else if (data.type === "done") {
+        done = true;
+        text = data.text ?? text;
+        steps = data.steps ?? steps;
+        doneSessionId = data.sessionId;
+      }
+    }
+  }
+
+  if (!done) return null;
+  return { text, steps, sessionId: doneSessionId };
 }
 
 main().catch((err) => {

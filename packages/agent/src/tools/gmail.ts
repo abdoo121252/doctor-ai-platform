@@ -25,7 +25,7 @@ export function createReadEmailsTool(ctx: AgentContext) {
   });
 }
 
-export function createSendEmailTool(ctx: AgentContext) {
+export function createSendEmailTool(ctx: AgentContext, needsApproval = false) {
   return tool({
     description:
       "Send an email from the doctor's Gmail account. Requires approval in automated sessions.",
@@ -34,6 +34,7 @@ export function createSendEmailTool(ctx: AgentContext) {
       subject: z.string().describe("Email subject"),
       body: z.string().describe("Email body"),
     }),
+    needsApproval,
     execute: async (input) => {
       logInfo("tool:sendEmail", "Preparing to send", ctx.doctorId, { to: input.to });
       if (ctx.sessionType !== "chat" && ctx.requestApproval) {

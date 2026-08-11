@@ -16,7 +16,7 @@ export function createReadCalendarTool(ctx: AgentContext) {
   });
 }
 
-export function createCreateEventTool(ctx: AgentContext) {
+export function createCreateEventTool(ctx: AgentContext, needsApproval = false) {
   return tool({
     description:
       "Create a calendar event. Needs approval in automated sessions if attendees are added.",
@@ -30,6 +30,7 @@ export function createCreateEventTool(ctx: AgentContext) {
         .describe("Attendee email addresses"),
       description: z.string().optional().describe("Event description"),
     }),
+    needsApproval,
     execute: async (input) => {
       if (ctx.sessionType !== "chat" && ctx.requestApproval) {
         const result = await ctx.requestApproval("create_event", {
