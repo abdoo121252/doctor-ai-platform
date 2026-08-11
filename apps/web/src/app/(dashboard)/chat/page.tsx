@@ -390,39 +390,55 @@ function ChatSession({
         cr ? { [sessionId]: cr } : undefined
       );
       setLoaded(true);
-      // background refresh — update silently if API returns newer data
-      void fetch(`/api/sessions/${sessionId}/messages`)
-        .then((res) => res.json())
-        .then((data: LoadedMessages) => {
-          if (data.messages?.length >= (cached?.length ?? 0)) {
-            setInitialMessages(
-              data.messages.map((m) => {
-                const storedParts =
-                  Array.isArray(m.parts) && m.parts.length > 0
-                    ? (m.parts as AnyUIMessage["parts"])
-                    : undefined;
-                const parts = storedParts ?? [
-                  { type: "text", text: m.content } as AnyUIMessage,
-                ];
-                return {
-                  id: m.id,
-                  role: m.role,
-                  content: m.content,
-                  parts,
-                };
-              })
-            );
-            if (data.session?.publicAccessToken) {
-              setResumeSessions({
-                [sessionId]: {
-                  publicAccessToken: data.session.publicAccessToken,
-                  lastEventId: data.session.lastEventId ?? undefined,
-                },
-              });
+      // Background refresh: retry up to 6 times (1s→2s→4s→8s→16s→32s) so
+      // the worker has enough time to persist new messages to the DB before
+      // we give up. Stops early once the API returns more messages than the
+      // cache (meaning the worker completed and persisted).
+      (function refresh(attempt: number) {
+        const maxAttempts = 6;
+        fetch(`/api/sessions/${sessionId}/messages`)
+          .then((res) => res.json())
+          .then((data: LoadedMessages) => {
+            const apiLen = data.messages?.length ?? 0;
+            const cacheLen = cached?.length ?? 0;
+            if (apiLen > cacheLen || attempt >= maxAttempts) {
+              const target =
+                apiLen >= cacheLen ? data.messages : cached;
+              setInitialMessages(
+                target.map((m) => {
+                  const storedParts =
+                    Array.isArray(m.parts) && m.parts.length > 0
+                      ? (m.parts as AnyUIMessage["parts"])
+                      : undefined;
+                  const parts = storedParts ?? [
+                    { type: "text", text: m.content } as AnyUIMessage,
+                  ];
+                  return {
+                    id: m.id,
+                    role: m.role,
+                    content: m.content,
+                    parts,
+                  };
+                })
+              );
+              if (data.session?.publicAccessToken) {
+                setResumeSessions({
+                  [sessionId]: {
+                    publicAccessToken: data.session.publicAccessToken,
+                    lastEventId: data.session.lastEventId ?? undefined,
+                  },
+                });
+              }
+            } else {
+              setTimeout(() => refresh(attempt + 1), 1000 * 2 ** attempt);
             }
-          }
-        })
-        .catch(() => {});
+          })
+          .catch(() => {
+            if (attempt < maxAttempts) {
+              setTimeout(() => refresh(attempt + 1), 1000 * 2 ** attempt);
+            }
+          });
+      })(0);
       return;
     }
 
