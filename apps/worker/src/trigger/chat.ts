@@ -146,6 +146,10 @@ const doctorChat = chat.agent({
     );
   },
   run: async ({ messages, tools, signal }) => {
+    console.error("[doctor-chat] run messages count:", messages.length);
+    if (messages.length > 0) {
+      console.error("[doctor-chat] first msg role:", messages[0]?.role, "last msg role:", messages[messages.length - 1]?.role);
+    }
     const result = streamText({
       ...chat.toStreamTextOptions({ tools }),
       model: getModel(),
