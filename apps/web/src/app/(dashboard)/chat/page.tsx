@@ -614,17 +614,32 @@ function ChatInner({
     setInput("");
 
     if (!sessionId) {
-      // Brand-new chat: create the session row, then let the parent
-      // remount ChatSession with the new id and auto-send.
+      // Brand-new chat: create the session row, await the Trigger.dev
+      // session start so the run is registered, then seed both caches
+      // before the parent remounts ChatSession. This eliminates the
+      // session-switch spinner (cache hit → no API load) AND the
+      // transport connection handshake (session already exists on
+      // Trigger.dev → no server-action round-trip).
       try {
         const res = await fetch("/api/sessions", { method: "POST" });
         if (!res.ok) throw new Error("Failed to create session");
         const session = await res.json();
-        // Warm the Trigger.dev run before the first message lands
-        void startChatSession({
+
+        // Await — the run is registered on Trigger.dev before we switch.
+        const triggerResult = await startChatSession({
           chatId: session.id,
           clientData: doctorId ? { doctorId } : undefined,
         });
+
+        // Seed caches so ChatSession sees the session as "already loaded"
+        // and the transport can skip the startSession handshake.
+        sessionMessagesCache.set(session.id, []);
+        if (triggerResult?.publicAccessToken) {
+          sessionResumeCache.set(session.id, {
+            publicAccessToken: triggerResult.publicAccessToken,
+          });
+        }
+
         onSessionCreated(
           session.id,
           text.length > 60 ? text.slice(0, 57) + "..." : text,
