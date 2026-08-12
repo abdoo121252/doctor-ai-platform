@@ -2,13 +2,13 @@ import "../ws-polyfill";
 import { chat } from "@trigger.dev/sdk/ai";
 import { streamText, isStepCount } from "ai";
 import { z } from "zod";
-import { createClient } from "@supabase/supabase-js";
 import { buildTools, loadToolSensitivity } from "@repo/agent";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
   persistTurnMessages,
   persistSessionState,
   resolveDoctorId,
+  getSupabase,
 } from "../chat-persistence";
 
 const SYSTEM_PROMPT = `You are a university professor's personal AI assistant connected to their accounts (Google: Gmail, Calendar, Sheets, Drive — Microsoft: Outlook mail, Outlook calendar, OneDrive).
@@ -31,13 +31,6 @@ Your role is to help the professor manage their academic workload efficiently. Y
 6. You're an administrative assistant supporting academic work (lectures, grading, research, meetings, email) — not a medical or clinical tool.
 7. When asked to view emails, calendar, or files, use the available tools rather than pretending.
 8. Sensitive tools (sending email, creating events, reading files/sheets/drive) will pause for the doctor's approval before executing. That is expected — do not treat it as an error. When the doctor rejects, respect their decision and do not retry unless asked.`;
-
-function getSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_KEY!
-  );
-}
 
 const opencode = createOpenAICompatible({
   name: "opencode",
@@ -91,7 +84,6 @@ const doctorChat = chat.agent({
         }
       }
       if (!doctorId) return;
-      await persistTurnMessages(doctorId, chatId, uiMessages);
     } catch (e) {
       console.error("[doctor-chat] onTurnStart error:", e);
     }
@@ -107,10 +99,8 @@ const doctorChat = chat.agent({
       const doctorId =
         clientData?.doctorId ?? (await resolveDoctorId(chatId)) ?? "";
       if (!doctorId) return;
-      await Promise.all([
-        persistTurnMessages(doctorId, chatId, uiMessages),
-        persistSessionState(chatId, doctorId, chatAccessToken, lastEventId),
-      ]);
+      await persistTurnMessages(doctorId, chatId, uiMessages);
+      await persistSessionState(chatId, doctorId, chatAccessToken, lastEventId);
     } catch (e) {
       console.error("[doctor-chat] onTurnComplete error:", e);
     }
