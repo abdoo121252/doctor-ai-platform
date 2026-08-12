@@ -60,7 +60,59 @@ const doctorChat = chat.agent({
   maxTurns: 20,
   machine: "small-2x",
   oomMachine: "medium-2x",
-  idleTimeoutInSeconds: 300,
+  idleTimeoutInSeconds: 120,
+  preloadIdleTimeoutInSeconds: 120,
+  hydrateMessages: async ({ chatId }) => {
+    const supabase = getSupabase();
+    const { data: rows } = await supabase
+      .from("conversations")
+      .select("id, role, content, parts, created_at")
+      .eq("session_id", chatId)
+      .order("created_at", { ascending: true });
+
+    if (!rows) return [];
+
+    return rows.map((row) => {
+      const parts = (row.parts as Array<Record<string, unknown>> | null) ?? [
+        { type: "text", text: row.content },
+      ];
+      return {
+        id: row.id,
+        role: row.role as "user" | "assistant",
+        content: row.content,
+        parts,
+        createdAt: row.created_at,
+      };
+    });
+  },
+  prepareMessages: async ({ messages }) => {
+    // Dedup: when both the submit endpoint (AgentChat) and the browser
+    // transport deliver the same user message, the hydrated history
+    // already contains it with an assistant response. Drop the late-
+    // arriving transport copy to avoid a duplicate turn.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role !== "user") continue;
+      const text = typeof msg.content === "string" ? msg.content : "";
+      if (!text) continue;
+      // Walk backwards looking for the same user text that already
+      // has an assistant reply after it.
+      for (let j = i - 1; j >= 0; j--) {
+        const prev = messages[j];
+        if (prev.role === "assistant") continue;
+        if (prev.role === "user") {
+          const prevText =
+            typeof prev.content === "string" ? prev.content : "";
+          if (prevText === text) {
+            return messages.slice(0, i);
+          }
+          break;
+        }
+      }
+      break;
+    }
+    return messages;
+  },
   tools: async ({ clientData }) => {
     const doctorId = clientData?.doctorId ?? "";
     const supabase = getSupabase();
@@ -71,6 +123,16 @@ const doctorChat = chat.agent({
       supabase,
       toolSensitivity: sensitivity,
     });
+  },
+  onPreload: async ({ chatId, clientData }) => {
+    const doctorId = clientData?.doctorId ?? "";
+    if (!doctorId) return;
+    try {
+      const supabase = getSupabase();
+      await loadToolSensitivity(doctorId, supabase);
+    } catch {
+      // preload is best-effort
+    }
   },
   onTurnStart: async ({ chatId, uiMessages, clientData }) => {
     try {

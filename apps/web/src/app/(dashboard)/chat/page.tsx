@@ -556,6 +556,12 @@ function ChatInner({
     sessions: resumeSessions,
   });
 
+  const handleInputFocus = useCallback(() => {
+    if (sessionId) {
+      transport.preload(sessionId);
+    }
+  }, [sessionId, transport]);
+
   const {
     messages,
     sendMessage,
@@ -611,6 +617,11 @@ function ChatInner({
         const res = await fetch("/api/sessions", { method: "POST" });
         if (!res.ok) throw new Error("Failed to create session");
         const session = await res.json();
+        // Warm the Trigger.dev run before the first message lands
+        void startChatSession({
+          chatId: session.id,
+          clientData: doctorId ? { doctorId } : undefined,
+        });
         onSessionCreated(
           session.id,
           text.length > 60 ? text.slice(0, 57) + "..." : text,
@@ -622,6 +633,19 @@ function ChatInner({
       }
       return;
     }
+
+    // Fire-and-forget: save message to DB and wake the Trigger.dev agent
+    // via the submit endpoint. Uses keepalive so the request survives
+    // tab close — even if the user navigates away, the message is
+    // persisted and the agent processes it.
+    fetch(`/api/sessions/${sessionId}/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: text }),
+      keepalive: true,
+    }).catch(() => {
+      // endpoint handled or tab closed — nothing to do
+    });
 
     await sendMessage({ text });
     onSessionUpdated(
@@ -965,6 +989,7 @@ function ChatInner({
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onFocus={handleInputFocus}
           placeholder="Ask about emails, calendar, files..."
           disabled={streaming}
           className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"

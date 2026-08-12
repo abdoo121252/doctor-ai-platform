@@ -89,6 +89,7 @@ export interface Database {
           session_type: string;
           role: string;
           content: string;
+          parts: Json | null;
           created_at: string;
         };
         Insert: {
@@ -98,6 +99,7 @@ export interface Database {
           session_type: string;
           role: string;
           content: string;
+          parts?: Json | null;
           created_at?: string;
         };
         Update: {
@@ -107,6 +109,7 @@ export interface Database {
           session_type?: string;
           role?: string;
           content?: string;
+          parts?: Json | null;
           created_at?: string;
         };
       };
