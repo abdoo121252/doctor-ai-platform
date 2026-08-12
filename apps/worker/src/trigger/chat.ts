@@ -58,6 +58,7 @@ const doctorChat = chat.agent({
     }),
   ]),
   maxTurns: 20,
+  machine: "small-1x",
   idleTimeoutInSeconds: 300,
   tools: async ({ clientData }) => {
     const doctorId = clientData?.doctorId ?? "";
