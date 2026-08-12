@@ -100,9 +100,10 @@ function extractPartsFromUIMessage(
 
 /**
  * Persist the full conversation for a doctor + session into the
- * `conversations` table. Overwrite-style (delete + insert) so it is
- * idempotent across turns and continuation runs — safe to call from
- * onTurnStart and onTurnComplete. Returns void; never throws.
+ * `conversations` table. Uses upsert by message `id` so the original
+ * `created_at` is preserved and only genuinely new messages produce a
+ * new timestamp. Idempotent across turns and continuation runs.
+ * Returns void; never throws.
  */
 export async function persistTurnMessages(
   doctorId: string,
@@ -121,6 +122,7 @@ export async function persistTurnMessages(
     .map(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (m: any) => ({
+        id: m.id,
         doctor_id: doctorId,
         session_id: chatId,
         session_type: "chat",
@@ -132,20 +134,13 @@ export async function persistTurnMessages(
 
   if (rows.length === 0) return;
 
-  const { error: deleteError } = await supabase
+  // Upsert keeps original created_at for existing messages and only
+  // inserts brand-new rows with a fresh timestamp.
+  const { error } = await supabase
     .from("conversations")
-    .delete()
-    .eq("session_id", chatId)
-    .eq("doctor_id", doctorId);
-
-  if (deleteError) {
-    console.error("[chat-persist] Failed to clear conversation rows:", deleteError);
-    return;
-  }
-
-  const { error } = await supabase.from("conversations").insert(rows);
+    .upsert(rows, { onConflict: "id" });
   if (error) {
-    console.error("[chat-persist] Failed to insert conversation rows:", error);
+    console.error("[chat-persist] Failed to upsert conversation rows:", error);
   }
 }
 
