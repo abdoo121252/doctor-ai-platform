@@ -283,6 +283,9 @@ export default function ChatPage() {
           pendingFirstMessage={pendingFirstMessage}
           inputRef={inputRef}
           onSessionCreated={(id, title, firstMessage) => {
+            // Pre-seed the cache so ChatSession skips the DB round-trip
+            // when it remounts with the new session id.
+            sessionMessagesCache.set(id, []);
             setIsNewChat(false);
             setActiveSessionId(id);
             setPendingFirstMessage(firstMessage ?? null);
@@ -383,7 +386,7 @@ function ChatSession({
     }
 
     const cached = sessionMessagesCache.get(sessionId);
-    if (cached && cached.length > 0) {
+    if (cached !== undefined) {
       setInitialMessages(cached);
       const cr = sessionResumeCache.get(sessionId);
       setResumeSessions(
