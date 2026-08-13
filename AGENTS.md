@@ -51,6 +51,19 @@ Run a single workspace: `pnpm --filter @apps/web dev` or `pnpm --filter @repo/db
 - **Disabled in production** (only runs when `NODE_ENV !== "production"`), so it's safe to leave in the code.
 - Changes hot-reload on save. Deploy to production by pushing to GitHub (Vercel auto-deploys).
 
+## Total logging (capture EVERYTHING — for "something broke and I don't know why")
+Everything funnels into the same Supabase `logs` table (and `logs/local-dev.log`), then shows live on `/logs`. The point: when the site misbehaves, open `/logs`, hit **Copy all**, and paste it to the AI.
+
+Layers:
+- **Every HTTP request** → `apps/web/src/middleware.ts` calls `logEdgeRequest()` (source `request`): method + path + query, userId, auth, UA, IP, referer. Fire-and-forget raw POST to Supabase REST via anon key (`doctor_id = NULL`, allowed by RLS; userId rides in `details`). Skips `/api/logs` so the page's own polling isn't logged.
+- **Server errors/warnings** → `apps/web/src/instrumentation.ts` (needs `experimental.instrumentationHook` in `next.config.js`) → `apps/web/src/lib/server-logging.ts` (`initServerLogging`, Node runtime only):
+  - `process.on('uncaughtException')` (source `uncaughtException`) and `unhandledRejection` (source `unhandledRejection`).
+  - `console.error` is patched (source `console`) so any library error (AI SDK, Supabase, Next) is captured. `console.warn` is NOT patched (avoids recursion with the logger's own warn-on-insert-failure).
+  - `globalThis.fetch` is patched (source `fetch`) to log every outbound call (Supabase, model, Google/Microsoft) as `METHOD host/path -> status (ms)`, warn on 4xx, error on 5xx/network. Skips `/rest/v1/logs`, `/rest/v1/tool_execution_log`, `/auth/v1/token`, `file:`/`data:` (recursion + noise guards).
+- **Client/browser errors** → `apps/web/src/components/error-reporter.tsx` mounted in the root layout: `window 'error'` + `unhandledrejection` (source `client`) and an `ErrorBoundary` (source `react`) POST to `POST /api/logs/ingest`.
+- **App code** → existing `log*()` calls in `packages/agent/src/logger.ts` (sources like `chat`, `chat-runner`, `gmail`, etc.).
+- **UI** → `apps/web/src/app/(dashboard)/logs/page.tsx` polls every 2s (Pause/Live toggle), filter by level + search (message/source), **Copy all** / per-row copy, relative timestamps.
+
 ## Testing (test the feature through its API, not the browser)
 Every UI button calls an API endpoint, so tests hit the real endpoints with an auth cookie — no browser needed. The auth cookie is built from a real Supabase password sign-in using the **test user**.
 
@@ -149,6 +162,12 @@ Trigger.dev SDK v3.3.0 does not have `wait.createToken`/`forToken`/`completeToke
 | Logger (DB + local file) | `packages/agent/src/logger.ts` |
 | Local log output | `logs/local-dev.log` (gitignored) |
 | Request trace logger | `apps/web/src/lib/request-trace.ts` → `apps/web/logs/traces/*.log` (gitignored) |
+| Request logging (middleware) | `apps/web/src/lib/edge-logger.ts` (`logEdgeRequest`) |
+| Server total-capture | `apps/web/src/instrumentation.ts` → `apps/web/src/lib/server-logging.ts` |
+| Client error capture | `apps/web/src/components/error-reporter.tsx` |
+| Client log ingest API | `apps/web/src/app/api/logs/ingest/route.ts` (POST) |
+| Logs API (read) | `apps/web/src/app/api/logs/route.ts` (GET, `level` + `q` filters) |
+| Logs UI | `apps/web/src/app/(dashboard)/logs/page.tsx` |
 | Test config / env loader | `scripts/lib/config.ts` |
 | Node 20 WebSocket polyfill | `scripts/lib/polyfill.ts` |
 | Agent tool tests | `scripts/test-agent.ts` (`pnpm test:agent`) |

@@ -10,6 +10,8 @@ import {
   Check,
   Search,
   Terminal,
+  Pause,
+  Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -36,6 +38,18 @@ const levelColor: Record<string, string> = {
   warn: "border-yellow-500/30 bg-yellow-500/5",
   error: "border-red-500/30 bg-red-500/5",
 };
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return new Date(iso).toLocaleString();
+}
 
 function formatLogEntry(entry: LogEntry): string {
   const ts = new Date(entry.created_at).toISOString();
@@ -74,6 +88,7 @@ export default function LogsPage() {
   const [loading, setLoading] = useState(true);
   const [level, setLevel] = useState("");
   const [search, setSearch] = useState("");
+  const [live, setLive] = useState(true);
   const [copiedAll, setCopiedAll] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -97,6 +112,12 @@ export default function LogsPage() {
     const t = setTimeout(() => fetchLogs(level, search), 300);
     return () => clearTimeout(t);
   }, [level, search, fetchLogs]);
+
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => fetchLogs(level, search), 2000);
+    return () => clearInterval(id);
+  }, [live, level, search, fetchLogs]);
 
   const handleCopyAll = async () => {
     const scope = [
@@ -132,8 +153,23 @@ export default function LogsPage() {
                 {logs.length}
               </Badge>
             )}
+            {live && (
+              <span className="flex items-center gap-1 text-xs text-green-500">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-green-500" />
+                Live
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant={live ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setLive((v) => !v)}
+              title={live ? "Pause live updates" : "Resume live updates"}
+            >
+              {live ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              {live ? "Pause" : "Live"}
+            </Button>
             <Button variant="outline" size="sm" onClick={fetchLogs.bind(null, level, search)} disabled={loading}>
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             </Button>
@@ -188,8 +224,11 @@ export default function LogsPage() {
                   <span className="font-mono text-xs font-semibold text-muted-foreground">
                     [{entry.source}]
                   </span>
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(entry.created_at).toLocaleString()}
+                  <span
+                    className="text-xs text-muted-foreground"
+                    title={new Date(entry.created_at).toLocaleString()}
+                  >
+                    {timeAgo(entry.created_at)}
                   </span>
                 </div>
                 <p className="mt-1 break-words">{entry.message}</p>

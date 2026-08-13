@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { logEdgeRequest } from "@/lib/edge-logger";
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next();
@@ -24,6 +25,26 @@ export async function middleware(request: NextRequest) {
   );
 
   const { data: { session } } = await supabase.auth.getSession();
+
+  // Log every request (fire-and-forget). Skip the logs endpoints so the
+  // logs page's own polling doesn't spam the table.
+  if (!request.nextUrl.pathname.startsWith("/api/logs")) {
+    const userId = session?.user?.id ?? null;
+    logEdgeRequest({
+      level: "info",
+      source: "request",
+      message: `${request.method} ${request.nextUrl.pathname}${request.nextUrl.search}`,
+      details: {
+        userId,
+        auth: !!session,
+        userAgent: request.headers.get("user-agent"),
+        ip:
+          request.headers.get("x-forwarded-for") ??
+          request.headers.get("x-real-ip"),
+        referer: request.headers.get("referer"),
+      },
+    });
+  }
 
   // Public routes
   const publicPaths = [

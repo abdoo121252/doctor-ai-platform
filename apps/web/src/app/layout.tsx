@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ErrorBoundary, ErrorReporter } from "@/components/error-reporter";
 
 export const metadata: Metadata = {
   title: "Doctor AI Assistant",
@@ -14,7 +15,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen bg-background antialiased">
-        {children}
+        <ErrorReporter />
+        <ErrorBoundary>{children}</ErrorBoundary>
       </body>
     </html>
   );
