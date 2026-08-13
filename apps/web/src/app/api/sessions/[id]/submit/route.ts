@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createTrace } from "@/lib/request-trace";
-import { AgentChat } from "@trigger.dev/sdk/chat";
 
 export const dynamic = "force-dynamic";
 
@@ -73,29 +72,6 @@ export async function POST(
       trace.end({ phase: "db-insert", result: "error" });
       return NextResponse.json({ error: "Failed to save message" }, { status: 500 });
     }
-
-    trace.phase("trigger-delivery");
-    // Fire-and-forget: deliver the message to the agent via Trigger.dev API.
-    // The agent wakes up, processes the message, and persists its response.
-    const chat = new AgentChat({
-      agent: "doctor-chat",
-      id: sessionId,
-      clientData: { doctorId },
-    });
-
-    chat.sendRaw(
-      [
-        {
-          id: row.id,
-          role: "user",
-          parts: (row.parts as Array<Record<string, unknown>> | null) ?? [
-            { type: "text", text: content },
-          ],
-        },
-      ]
-    ).catch((e) => {
-      console.error("[submit] AgentChat.sendRaw failed:", e);
-    });
 
     trace.end({ phase: "complete", messageId: row.id });
 

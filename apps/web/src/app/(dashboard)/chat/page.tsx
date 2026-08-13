@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Send,
   Loader2,
@@ -579,6 +579,21 @@ function ChatInner({
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
   });
 
+  // Safety net: if the transport replays a previous message (stale cursor /
+  // replay race), dedup by id before rendering so the same bubble never shows
+  // twice. Original indices are preserved so approval/edit handlers keep
+  // pointing at the right entries in the live `messages` array.
+  const dedupedMessages = useMemo(() => {
+    const seen = new Set<string>();
+    const result: Array<{ msg: AnyUIMessage; index: number }> = [];
+    messages.forEach((msg: AnyUIMessage, index: number) => {
+      if (msg.id != null && seen.has(msg.id)) return;
+      if (msg.id != null) seen.add(msg.id);
+      result.push({ msg, index });
+    });
+    return result;
+  }, [messages]);
+
   // Feed the current messages back to ChatSession for cross-session caching
   useEffect(() => {
     onMessagesSnapshot?.(messages);
@@ -827,7 +842,7 @@ function ChatInner({
             </p>
           </div>
         ) : (
-          messages.map((msg: AnyUIMessage, i: number) => (
+          dedupedMessages.map(({ msg, index: i }) => (
             <div
               key={msg.id ?? i}
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
