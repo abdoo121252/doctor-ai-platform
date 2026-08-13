@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase-server";
 import { createTrace } from "@/lib/request-trace";
+import {
+  loadChatState,
+  findCrashedToolExecutions,
+} from "@/lib/chat-state";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +54,13 @@ export async function GET(
 
     const msgs = messages ?? [];
     trace.info("messages loaded", { count: msgs.length });
+
+    const state = await loadChatState(supabase, params.id);
+    const crashedToolCalls = await findCrashedToolExecutions(
+      supabase,
+      params.id
+    );
+
     trace.end({ phase: "complete", sessionId: params.id, count: msgs.length });
     return NextResponse.json({
       session: {
@@ -57,6 +68,11 @@ export async function GET(
         title: session.title,
         publicAccessToken: session.public_access_token,
         lastEventId: session.last_event_id,
+      },
+      state: {
+        status: state?.status ?? null,
+        pendingApproval: state?.pending_approval ?? null,
+        crashedToolCalls,
       },
       messages: msgs.map((m) => ({
         id: m.id,

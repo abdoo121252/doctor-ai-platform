@@ -2,9 +2,18 @@ export {
   generateChatResponse,
   streamChatResponse,
   buildTools,
+  buildChatTools,
+  runChatStep,
+  getModel,
   rewriteToolInput,
 } from "./agent";
-export type { ChatResponse, StreamChatResponse } from "./agent";
+export type {
+  ChatResponse,
+  StreamChatResponse,
+  ChatStepResult,
+  ChatStepToolCall,
+  ChatTools,
+} from "./agent";
 export type { AgentContext } from "./context";
 export { loadToolSensitivity } from "./tool-sensitivity";
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Send,
   Loader2,
@@ -12,17 +12,10 @@ import {
   Pencil,
   ShieldAlert,
   ShieldCheck,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { useChat } from "@ai-sdk/react";
-import { lastAssistantMessageIsCompleteWithApprovalResponses } from "ai";
-import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react";
-import {
-  startChatSession,
-  mintChatAccessToken,
-  getCurrentDoctorId,
-} from "@/app/actions";
 
 interface Session {
   id: string;
@@ -32,28 +25,51 @@ interface Session {
   lastMessage?: string;
 }
 
-interface SessionResumeState {
-  publicAccessToken: string | null;
-  lastEventId: string | null;
+interface ChatPart {
+  type: string;
+  text?: string;
+  toolName?: string;
+  toolCallId?: string;
+  state?: "approval-requested" | "complete" | "error" | "rejected";
+  input?: unknown;
+  output?: unknown;
+  approvalId?: string;
+  revised?: boolean;
 }
 
-interface LoadedMessages {
+interface ChatMsg {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  parts: ChatPart[];
+  live?: boolean;
+}
+
+interface LoadedData {
   messages: Array<{
     id: string;
     role: "user" | "assistant";
     content: string;
-    parts?: AnyUIMessage["parts"] | string;
+    parts?: ChatPart[] | string;
   }>;
-  session: SessionResumeState;
+  state: {
+    status: string | null;
+    pendingApproval: {
+      approvalId: string;
+      toolName: string;
+      toolCallId: string;
+      input: unknown;
+    } | null;
+    crashedToolCalls: string[];
+  };
 }
 
-const CHAT_TASK_ID = "doctor-chat";
-
-const sessionMessagesCache = new Map<string, AnyUIMessage[]>();
-const sessionResumeCache = new Map<
-  string,
-  { publicAccessToken: string; lastEventId?: string }
->();
+function uid(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -62,7 +78,9 @@ export default function ChatPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [isNewChat, setIsNewChat] = useState(false);
-  const [pendingFirstMessage, setPendingFirstMessage] = useState<string | null>(null);
+  const [pendingFirstMessage, setPendingFirstMessage] = useState<string | null>(
+    null
+  );
   const inputRef = useRef<HTMLInputElement>(null);
 
   const fetchSessions = useCallback(async () => {
@@ -138,10 +156,6 @@ export default function ChatPage() {
     setEditingId(null);
   }
 
-  function handleCancelEdit() {
-    setEditingId(null);
-  }
-
   function formatTime(iso: string) {
     const d = new Date(iso);
     const now = new Date();
@@ -203,7 +217,7 @@ export default function ChatPage() {
                         autoFocus
                         onKeyDown={(e) => {
                           if (e.key === "Enter") handleSaveEdit(session.id);
-                          if (e.key === "Escape") handleCancelEdit();
+                          if (e.key === "Escape") setEditingId(null);
                         }}
                       />
                       <button
@@ -218,7 +232,7 @@ export default function ChatPage() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleCancelEdit();
+                          setEditingId(null);
                         }}
                         className="text-muted-foreground hover:text-foreground"
                       >
@@ -271,21 +285,17 @@ export default function ChatPage() {
         <div className="mb-4">
           <h1 className="text-2xl font-semibold">
             {activeSessionId
-              ? sessions.find((s) => s.id === activeSessionId)?.title ??
-                "Chat"
+              ? sessions.find((s) => s.id === activeSessionId)?.title ?? "Chat"
               : "New Chat"}
           </h1>
         </div>
 
-        <ChatSession
+        <ChatView
           key={activeSessionId ?? "new"}
           sessionId={activeSessionId}
           pendingFirstMessage={pendingFirstMessage}
           inputRef={inputRef}
           onSessionCreated={(id, title, firstMessage) => {
-            // Pre-seed the cache so ChatSession skips the DB round-trip
-            // when it remounts with the new session id.
-            sessionMessagesCache.set(id, []);
             setIsNewChat(false);
             setActiveSessionId(id);
             setPendingFirstMessage(firstMessage ?? null);
@@ -299,13 +309,12 @@ export default function ChatPage() {
               ...prev,
             ]);
           }}
-          onSessionUpdated={(id, title, lastMessage) => {
+          onSessionUpdated={(id, lastMessage) => {
             setSessions((prev) =>
               prev.map((s) =>
                 s.id === id
                   ? {
                       ...s,
-                      title: title ?? s.title,
                       updatedAt: new Date().toISOString(),
                       lastMessage: lastMessage ?? s.lastMessage,
                     }
@@ -319,15 +328,7 @@ export default function ChatPage() {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyUIMessage = any;
-
-/**
- * Loads history + resume state for the given session, then renders the
- * transport-backed chat. `useChat` initializes from `initialMessages` at
- * mount, so we gate rendering until history is loaded.
- */
-function ChatSession({
+function ChatView({
   sessionId,
   pendingFirstMessage,
   inputRef,
@@ -338,150 +339,80 @@ function ChatSession({
   pendingFirstMessage: string | null;
   inputRef: React.RefObject<HTMLInputElement>;
   onSessionCreated: (id: string, title: string, firstMessage?: string) => void;
-  onSessionUpdated: (id: string, title?: string, lastMessage?: string) => void;
+  onSessionUpdated: (id: string, lastMessage?: string) => void;
 }) {
-  const [initialMessages, setInitialMessages] = useState<AnyUIMessage[]>([]);
-  const [resumeSessions, setResumeSessions] = useState<
-    Record<string, { publicAccessToken: string; lastEventId?: string }> | undefined
-  >(undefined);
-  const [doctorId, setDoctorId] = useState<string | undefined>(undefined);
-  const [doctorIdReady, setDoctorIdReady] = useState(false);
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [input, setInput] = useState("");
+  const [streaming, setStreaming] = useState(false);
+  const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [crashedToolCalls, setCrashedToolCalls] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const messagesSnapshotRef = useRef<AnyUIMessage[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{
+    part: ChatPart;
+    instruction: string;
+    loading: boolean;
+    error: string | null;
+  } | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const sentFirst = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    getCurrentDoctorId()
-      .then((id) => {
-        if (!cancelled) setDoctorId(id);
-      })
-      .catch(() => {
-        if (!cancelled) setDoctorId(undefined);
-      })
-      .finally(() => {
-        if (!cancelled) setDoctorIdReady(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Save messages to cache before unmount (session switch or page close)
-  useEffect(() => {
-    return () => {
-      if (sessionId && messagesSnapshotRef.current.length > 0) {
-        sessionMessagesCache.set(sessionId, [...messagesSnapshotRef.current]);
-      }
-    };
-  }, [sessionId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!doctorIdReady) return;
     if (!sessionId) {
-      setInitialMessages([]);
-      setResumeSessions(undefined);
+      setMessages([]);
+      setCrashedToolCalls([]);
+      setAwaitingApproval(false);
       setLoaded(true);
       return;
     }
-
-    const cached = sessionMessagesCache.get(sessionId);
-    if (cached !== undefined) {
-      setInitialMessages(cached);
-      const cr = sessionResumeCache.get(sessionId);
-      setResumeSessions(
-        cr ? { [sessionId]: cr } : undefined
-      );
-      setLoaded(true);
-      // Background refresh: retry up to 6 times (1s→2s→4s→8s→16s→32s) so
-      // the worker has enough time to persist new messages to the DB before
-      // we give up. Stops early once the API returns more messages than the
-      // cache (meaning the worker completed and persisted).
-      (function refresh(attempt: number) {
-        const maxAttempts = 6;
-        fetch(`/api/sessions/${sessionId}/messages`)
-          .then((res) => res.json())
-          .then((data: LoadedMessages) => {
-            const apiLen = data.messages?.length ?? 0;
-            const cacheLen = cached?.length ?? 0;
-            if (apiLen > cacheLen || attempt >= maxAttempts) {
-              const target =
-                apiLen >= cacheLen ? data.messages : cached;
-              setInitialMessages(
-                target.map((m) => {
-                  const storedParts =
-                    Array.isArray(m.parts) && m.parts.length > 0
-                      ? (m.parts as AnyUIMessage["parts"])
-                      : undefined;
-                  const parts = storedParts ?? [
-                    { type: "text", text: m.content } as AnyUIMessage,
-                  ];
-                  return {
-                    id: m.id,
-                    role: m.role,
-                    content: m.content,
-                    parts,
-                  };
-                })
-              );
-              if (data.session?.publicAccessToken) {
-                setResumeSessions({
-                  [sessionId]: {
-                    publicAccessToken: data.session.publicAccessToken,
-                    lastEventId: data.session.lastEventId ?? undefined,
-                  },
-                });
-              }
-            } else {
-              setTimeout(() => refresh(attempt + 1), 1000 * 2 ** attempt);
-            }
-          })
-          .catch(() => {
-            if (attempt < maxAttempts) {
-              setTimeout(() => refresh(attempt + 1), 1000 * 2 ** attempt);
-            }
-          });
-      })(0);
-      return;
-    }
-
     setLoaded(false);
     fetch(`/api/sessions/${sessionId}/messages`)
       .then((res) => res.json())
-      .then((data: LoadedMessages) => {
+      .then((data: LoadedData) => {
         if (cancelled) return;
-        setInitialMessages(
-          data.messages.map((m) => {
-            const storedParts =
-              Array.isArray(m.parts) && m.parts.length > 0
-                ? (m.parts as AnyUIMessage["parts"])
-                : undefined;
-            const parts = storedParts ?? [
-              { type: "text", text: m.content } as AnyUIMessage,
-            ];
-            return {
-              id: m.id,
-              role: m.role,
-              content: m.content,
-              parts,
-            };
-          })
-        );
-        if (data.session?.publicAccessToken) {
-          setResumeSessions({
-            [sessionId]: {
-              publicAccessToken: data.session.publicAccessToken,
-              lastEventId: data.session.lastEventId ?? undefined,
-            },
-          });
+        const msgs: ChatMsg[] = (data.messages ?? []).map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content ?? "",
+          parts: normalizeParts(m.parts),
+        }));
+
+        // If the state is awaiting approval but the transcript has no pending
+        // card (e.g. old row shape), synthesize one from chat_state.
+        if (data.state?.pendingApproval) {
+          setAwaitingApproval(true);
+          const has = msgs.some((m) =>
+            m.parts.some(
+              (p) =>
+                p.state === "approval-requested" &&
+                p.approvalId === data.state.pendingApproval!.approvalId
+            )
+          );
+          if (!has && msgs.length > 0) {
+            const last = msgs[msgs.length - 1];
+            if (last && last.role === "assistant") {
+              last.parts = [
+                ...last.parts,
+                {
+                  type: `tool-${data.state.pendingApproval.toolName}`,
+                  toolName: data.state.pendingApproval.toolName,
+                  toolCallId: data.state.pendingApproval.toolCallId,
+                  approvalId: data.state.pendingApproval.approvalId,
+                  state: "approval-requested",
+                  input: data.state.pendingApproval.input,
+                },
+              ];
+            }
+          }
         } else {
-          setResumeSessions(undefined);
+          setAwaitingApproval(false);
         }
+        setCrashedToolCalls(data.state?.crashedToolCalls ?? []);
+        setMessages(msgs);
       })
       .catch(() => {
-        if (cancelled) return;
-        setInitialMessages([]);
-        setResumeSessions(undefined);
+        if (!cancelled) setMessages([]);
       })
       .finally(() => {
         if (!cancelled) setLoaded(true);
@@ -489,230 +420,366 @@ function ChatSession({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, doctorIdReady]);
+  }, [sessionId]);
 
-  if (!loaded || !doctorIdReady) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  return (
-    <ChatInner
-      sessionId={sessionId}
-      initialMessages={initialMessages}
-      resumeSessions={resumeSessions}
-      doctorId={doctorId}
-      pendingFirstMessage={pendingFirstMessage}
-      inputRef={inputRef}
-      onSessionCreated={onSessionCreated}
-      onSessionUpdated={onSessionUpdated}
-      onMessagesSnapshot={(msgs) => {
-        messagesSnapshotRef.current = msgs;
-      }}
-    />
-  );
-}
-
-function ChatInner({
-  sessionId,
-  initialMessages,
-  resumeSessions,
-  doctorId,
-  pendingFirstMessage,
-  inputRef,
-  onSessionCreated,
-  onSessionUpdated,
-  onMessagesSnapshot,
-}: {
-  sessionId: string | null;
-  initialMessages: AnyUIMessage[];
-  resumeSessions:
-    | Record<string, { publicAccessToken: string; lastEventId?: string }>
-    | undefined;
-  doctorId?: string;
-  pendingFirstMessage: string | null;
-  inputRef: React.RefObject<HTMLInputElement>;
-  onSessionCreated: (id: string, title: string, firstMessage?: string) => void;
-  onSessionUpdated: (id: string, title?: string, lastMessage?: string) => void;
-  onMessagesSnapshot?: (msgs: AnyUIMessage[]) => void;
-}) {
-  const [input, setInput] = useState("");
-  const endRef = useRef<HTMLDivElement>(null);
-  const [editing, setEditing] = useState<{
-    index: number;
-    partIndex: number;
-    instruction: string;
-    loading: boolean;
-    error: string | null;
-  } | null>(null);
-  const sentFirst = useRef(false);
-
-  const transport = useTriggerChatTransport({
-    task: CHAT_TASK_ID,
-    clientData: doctorId ? { doctorId } : undefined,
-    accessToken: ({ chatId }) => mintChatAccessToken(chatId),
-    startSession: ({ chatId, clientData }) =>
-      startChatSession({ chatId, clientData }),
-    sessions: resumeSessions,
-  });
-
-  const handleInputFocus = useCallback(() => {
-    if (sessionId) {
-      transport.preload(sessionId);
-    }
-  }, [sessionId, transport]);
-
-  const {
-    messages,
-    sendMessage,
-    addToolApprovalResponse,
-    setMessages,
-    status,
-  } = useChat<AnyUIMessage>({
-    id: sessionId ?? "new",
-    messages: initialMessages,
-    transport,
-    resume: initialMessages.length > 0 && !!sessionId,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-  });
-
-  // Safety net: if the transport replays a previous message (stale cursor /
-  // replay race), dedup by id before rendering so the same bubble never shows
-  // twice. Original indices are preserved so approval/edit handlers keep
-  // pointing at the right entries in the live `messages` array.
-  const dedupedMessages = useMemo(() => {
-    const seen = new Set<string>();
-    const result: Array<{ msg: AnyUIMessage; index: number }> = [];
-    messages.forEach((msg: AnyUIMessage, index: number) => {
-      if (msg.id != null && seen.has(msg.id)) return;
-      if (msg.id != null) seen.add(msg.id);
-      result.push({ msg, index });
-    });
-    return result;
-  }, [messages]);
-
-  // Feed the current messages back to ChatSession for cross-session caching
   useEffect(() => {
-    onMessagesSnapshot?.(messages);
-  }, [messages, onMessagesSnapshot]);
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, streaming]);
 
-  // Auto-send the pending first message for a brand-new chat
+  // Auto-send the pending first message for a brand-new chat.
   useEffect(() => {
     if (pendingFirstMessage && sessionId && !sentFirst.current) {
       sentFirst.current = true;
-      void sendMessage({ text: pendingFirstMessage });
-      onSessionUpdated(
-        sessionId,
-        undefined,
-        pendingFirstMessage.length > 60
-          ? pendingFirstMessage.slice(0, 57) + "..."
-          : pendingFirstMessage
-      );
+      void sendMessage(pendingFirstMessage);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingFirstMessage, sessionId]);
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, status]);
-
-  const streaming = status === "streaming" || status === "submitted";
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!input.trim() || streaming) return;
-
-    const text = input.trim();
-    setInput("");
-
-    if (!sessionId) {
-      // Brand-new chat: create the session row, await the Trigger.dev
-      // session start so the run is registered, then seed both caches
-      // before the parent remounts ChatSession. This eliminates the
-      // session-switch spinner (cache hit → no API load) AND the
-      // transport connection handshake (session already exists on
-      // Trigger.dev → no server-action round-trip).
+  function normalizeParts(
+    parts: ChatPart[] | string | undefined
+  ): ChatPart[] {
+    if (Array.isArray(parts)) return parts;
+    if (typeof parts === "string") {
       try {
-        const res = await fetch("/api/sessions", { method: "POST" });
-        if (!res.ok) throw new Error("Failed to create session");
-        const session = await res.json();
-
-        // Await — the run is registered on Trigger.dev before we switch.
-        const triggerResult = await startChatSession({
-          chatId: session.id,
-          clientData: doctorId ? { doctorId } : undefined,
-        });
-
-        // Seed caches so ChatSession sees the session as "already loaded"
-        // and the transport can skip the startSession handshake.
-        sessionMessagesCache.set(session.id, []);
-        if (triggerResult?.publicAccessToken) {
-          sessionResumeCache.set(session.id, {
-            publicAccessToken: triggerResult.publicAccessToken,
-          });
-        }
-
-        onSessionCreated(
-          session.id,
-          text.length > 60 ? text.slice(0, 57) + "..." : text,
-          text
-        );
-      } catch (error) {
-        console.error("Failed to create session", error);
-        setInput(text);
+        const parsed = JSON.parse(parts);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
       }
-      return;
     }
+    return [];
+  }
 
-    // Fire-and-forget: save message to DB and wake the Trigger.dev agent
-    // via the submit endpoint. Uses keepalive so the request survives
-    // tab close — even if the user navigates away, the message is
-    // persisted and the agent processes it.
-    fetch(`/api/sessions/${sessionId}/submit`, {
+  function toolLabel(partType: string) {
+    return partType.replace(/^tool-/, "");
+  }
+
+  function serializeConversation(all: ChatMsg[]): Array<{
+    role: "user" | "assistant" | "tool";
+    content: string;
+  }> {
+    const out: Array<{ role: "user" | "assistant" | "tool"; content: string }> =
+      [];
+    for (const msg of all) {
+      if (msg.content) out.push({ role: msg.role, content: msg.content });
+      for (const p of msg.parts) {
+        if (p.type === "text") continue;
+        if (p.type.startsWith("tool-")) {
+          const line = [
+            `[tool-call: ${toolLabel(p.type)}]`,
+            JSON.stringify(p.input ?? {}),
+          ];
+          if (p.output !== undefined)
+            line.push(`→ ${JSON.stringify(p.output)}`);
+          out.push({ role: "tool", content: line.join(" ") });
+        }
+      }
+    }
+    return out;
+  }
+
+  async function streamEvents(
+    url: string,
+    body: Record<string, unknown>,
+    onEvent: (event: Record<string, unknown>) => void
+  ) {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: text }),
-      keepalive: true,
-    }).catch(() => {
-      // endpoint handled or tab closed — nothing to do
+      body: JSON.stringify(body),
     });
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => null);
+      throw new Error(data?.error ?? "Request failed");
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const chunk = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const line = chunk.trim();
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload) continue;
+        let event: Record<string, unknown>;
+        try {
+          event = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+        onEvent(event);
+      }
+    }
+  }
 
-    await sendMessage({ text });
-    onSessionUpdated(
-      sessionId,
-      undefined,
-      text.length > 60 ? text.slice(0, 57) + "..." : text
+  function appendLiveAssistant(
+    content: string,
+    parts: ChatPart[] = []
+  ): ChatMsg {
+    const msg: ChatMsg = {
+      id: uid(),
+      role: "assistant",
+      content,
+      parts,
+      live: true,
+    };
+    setMessages((prev) => [...prev, msg]);
+    return msg;
+  }
+
+  async function sendMessage(text: string) {
+    const userMsg: ChatMsg = {
+      id: uid(),
+      role: "user",
+      content: text,
+      parts: [],
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setInput("");
+    setError(null);
+    setStreaming(true);
+    appendLiveAssistant("");
+
+    let resolvedSessionId = sessionId;
+
+    try {
+      await streamEvents("/api/chat", { message: text, sessionId }, (event) => {
+        switch (event.type) {
+          case "text":
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.role === "assistant" && last.live) {
+                return [
+                  ...prev.slice(0, -1),
+                  { ...last, content: last.content + String(event.text ?? "") },
+                ];
+              }
+              return [...prev, ...[]];
+            });
+            break;
+          case "tool":
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              const part: ChatPart = {
+                type: `tool-${event.toolName}`,
+                toolName: String(event.toolName),
+                toolCallId: String(event.toolCallId),
+                state: "complete",
+                input: event.input,
+              };
+              if (last && last.role === "assistant" && last.live) {
+                return [
+                  ...prev.slice(0, -1),
+                  { ...last, parts: [...last.parts, part] },
+                ];
+              }
+              return [...prev, ...[]];
+            });
+            break;
+          case "tool-result":
+            applyToolResult(event);
+            break;
+          case "approval": {
+            const part: ChatPart = {
+              type: `tool-${event.toolName}`,
+              toolName: String(event.toolName),
+              toolCallId: String(event.toolCallId),
+              approvalId: String(event.approvalId),
+              state: "approval-requested",
+              input: event.input,
+            };
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.role === "assistant" && last.live) {
+                return [
+                  ...prev.slice(0, -1),
+                  { ...last, parts: [...last.parts, part] },
+                ];
+              }
+              return [...prev, ...[]];
+            });
+            setAwaitingApproval(true);
+            break;
+          }
+          case "done":
+            if (!resolvedSessionId && typeof event.sessionId === "string") {
+              resolvedSessionId = event.sessionId;
+              const title = text.length > 60 ? text.slice(0, 57) + "..." : text;
+              onSessionCreated(event.sessionId, title, text);
+            }
+            onSessionUpdated(resolvedSessionId ?? "", text);
+            break;
+          case "error":
+            setError(String(event.error ?? "Something went wrong"));
+            break;
+        }
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setStreaming(false);
+      setMessages((prev) =>
+        prev.map((m) => (m.live ? { ...m, live: false } : m))
+      );
+    }
+  }
+
+  function applyToolResult(event: Record<string, unknown>) {
+    const toolCallId = String(event.toolCallId);
+    const output = event.output;
+    setMessages((prev) =>
+      prev.map((m) => ({
+        ...m,
+        parts: m.parts.map((p) => {
+          if (p.toolCallId !== toolCallId) return p;
+          const rejected =
+            output && typeof output === "object" && (output as { rejected?: boolean }).rejected;
+          return {
+            ...p,
+            output,
+            state: rejected ? "rejected" : "complete",
+          };
+        }),
+      }))
     );
   }
 
-  function handleApprove(index: number, partIndex: number) {
-    const part = messages[index]?.parts?.[partIndex];
-    const approvalId = part?.approval?.id;
-    if (!approvalId) return;
-    addToolApprovalResponse({ id: approvalId, approved: true });
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!input.trim() || streaming || awaitingApproval) return;
+    await sendMessage(input.trim());
   }
 
-  function handleReject(index: number, partIndex: number) {
-    const part = messages[index]?.parts?.[partIndex];
-    const approvalId = part?.approval?.id;
-    if (!approvalId) return;
-    addToolApprovalResponse({
-      id: approvalId,
-      approved: false,
-      reason: "Rejected by doctor",
-    });
+  async function handleApprove(part: ChatPart) {
+    if (!sessionId || !part.approvalId) return;
+    setAwaitingApproval(false);
+    setStreaming(true);
+    setError(null);
+    appendLiveAssistant("");
+    try {
+      await streamEvents(
+        "/api/chat/approval",
+        {
+          sessionId,
+          approvalId: part.approvalId,
+          approved: true,
+          input: part.revised ? part.input : undefined,
+        },
+        (event) => {
+          switch (event.type) {
+            case "text":
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                if (last && last.role === "assistant" && last.live) {
+                  return [
+                    ...prev.slice(0, -1),
+                    {
+                      ...last,
+                      content: last.content + String(event.text ?? ""),
+                    },
+                  ];
+                }
+                return prev;
+              });
+              break;
+            case "tool":
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                const part: ChatPart = {
+                  type: `tool-${event.toolName}`,
+                  toolName: String(event.toolName),
+                  toolCallId: String(event.toolCallId),
+                  state: "complete",
+                  input: event.input,
+                };
+                if (last && last.role === "assistant" && last.live) {
+                  return [
+                    ...prev.slice(0, -1),
+                    { ...last, parts: [...last.parts, part] },
+                  ];
+                }
+                return prev;
+              });
+              break;
+            case "tool-result":
+              applyToolResult(event);
+              break;
+            case "approval":
+              setAwaitingApproval(true);
+              break;
+            case "done":
+              onSessionUpdated(sessionId, "");
+              break;
+            case "error":
+              setError(String(event.error ?? "Something went wrong"));
+              break;
+          }
+        }
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setStreaming(false);
+      setMessages((prev) =>
+        prev.map((m) => (m.live ? { ...m, live: false } : m))
+      );
+    }
   }
 
-  function handleStartEdit(index: number, partIndex: number) {
-    const part = messages[index]?.parts?.[partIndex];
-    const approvalId = part?.approval?.id;
-    if (!approvalId) return;
+  async function handleReject(part: ChatPart) {
+    if (!sessionId || !part.approvalId) return;
+    setAwaitingApproval(false);
+    setStreaming(true);
+    setError(null);
+    appendLiveAssistant("");
+    try {
+      await streamEvents(
+        "/api/chat/approval",
+        {
+          sessionId,
+          approvalId: part.approvalId,
+          approved: false,
+        },
+        (event) => {
+          if (event.type === "text") {
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.role === "assistant" && last.live) {
+                return [
+                  ...prev.slice(0, -1),
+                  { ...last, content: last.content + String(event.text ?? "") },
+                ];
+              }
+              return prev;
+            });
+          } else if (event.type === "tool-result") {
+            applyToolResult(event);
+          } else if (event.type === "done") {
+            onSessionUpdated(sessionId, "");
+          } else if (event.type === "error") {
+            setError(String(event.error ?? "Something went wrong"));
+          }
+        }
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setStreaming(false);
+      setMessages((prev) =>
+        prev.map((m) => (m.live ? { ...m, live: false } : m))
+      );
+    }
+  }
+
+  function handleStartEdit(part: ChatPart) {
     setEditing({
-      index,
-      partIndex,
+      part,
       instruction: JSON.stringify(part.input ?? {}, null, 2),
       loading: false,
       error: null,
@@ -721,11 +788,8 @@ function ChatInner({
 
   async function handleModifySave() {
     if (!editing) return;
-    const { index, partIndex, instruction } = editing;
-    const part = messages[index]?.parts?.[partIndex];
-    const approvalId = part?.approval?.id;
-    if (!approvalId || !instruction.trim()) return;
-
+    const { part, instruction } = editing;
+    if (!instruction.trim()) return;
     setEditing((prev) => (prev ? { ...prev, loading: true, error: null } : prev));
 
     try {
@@ -733,7 +797,7 @@ function ChatInner({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          toolName: String(part.type).replace(/^tool-/, ""),
+          toolName: toolLabel(part.type),
           input: part.input ?? {},
           instruction: instruction.trim(),
           conversation: serializeConversation(messages),
@@ -749,33 +813,16 @@ function ChatInner({
         return;
       }
       const { input: revised } = await res.json();
-
-      // Show the revised input on the card, still awaiting approval
-      setMessages((prev: AnyUIMessage[]) => {
-        return prev.map((m, i) =>
-          i === index
-            ? {
-                ...m,
-                parts: m.parts.map((p: AnyUIMessage, pi: number) =>
-                  pi === partIndex ? { ...p, input: revised } : p
-                ),
-              }
-            : m
-        );
-      });
-
-      // Persist the revised input in the worker's durable chain so the
-      // subsequent Approve executes the modified input, not the original.
-      const message = messages[index];
-      if (sessionId && message) {
-        void transport.sendAction(sessionId, {
-          type: "modify-tool-input",
-          messageId: message.id,
-          toolCallId: part.toolCallId,
-          input: revised,
-        });
-      }
-
+      setMessages((prev) =>
+        prev.map((m) => ({
+          ...m,
+          parts: m.parts.map((p) =>
+            p.approvalId === part.approvalId
+              ? { ...p, input: revised, revised: true }
+              : p
+          ),
+        }))
+      );
       setEditing(null);
     } catch {
       setEditing((prev) =>
@@ -786,54 +833,32 @@ function ChatInner({
     }
   }
 
-  function handleCancelEdit() {
-    setEditing(null);
+  if (!loaded) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
-  function toolLabel(partType: string) {
-    return partType.replace(/^tool-/, "");
-  }
-
-  // AI SDK v7 UIMessage has no `content` field — text lives in parts.
-  // This extracts the plain text (and any tool metadata summary) for
-  // rendering inside the bubble.
-  function messageText(msg: AnyUIMessage): string {
-    if (typeof msg.content === "string" && msg.content) return msg.content;
-    if (!msg.parts || !Array.isArray(msg.parts)) return "";
-    return msg.parts
-      .filter((p: AnyUIMessage) => p?.type === "text" && typeof p?.text === "string")
-      .map((p: AnyUIMessage) => p.text)
-      .join("");
-  }
-
-  // Serialize the visible conversation into the same transcript shape the
-  // main agent receives ({role, content}[]), including tool calls, so the
-  // edit-AI can resolve references from the full context.
-  function serializeConversation(all: AnyUIMessage[]): Array<{
-    role: "user" | "assistant" | "tool";
-    content: string;
-  }> {
-    const out: Array<{ role: "user" | "assistant" | "tool"; content: string }> =
-      [];
-    for (const msg of all) {
-      const text = messageText(msg);
-      if (text) out.push({ role: msg.role, content: text });
-      for (const p of (msg.parts ?? []) as AnyUIMessage[]) {
-        if (p?.type === "text") continue;
-        if (typeof p?.type === "string" && p.type.startsWith("tool-")) {
-          const name = p.type.replace(/^tool-/, "");
-          const line = [`[tool-call: ${name}]`, JSON.stringify(p.input ?? {})];
-          if (p.output !== undefined) line.push(`→ ${JSON.stringify(p.output)}`);
-          out.push({ role: "tool", content: line.join(" ") });
-        }
-      }
-    }
-    return out;
-  }
+  const inputDisabled = streaming || awaitingApproval;
 
   return (
     <>
       <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+        {crashedToolCalls.length > 0 && (
+          <Card className="p-4 border-amber-500/50 bg-amber-50/50">
+            <div className="flex items-center gap-2 text-sm text-amber-700">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>
+                A sensitive action was interrupted before it could be confirmed
+                to have completed. Please review your connected accounts before
+                asking the assistant to repeat it.
+              </span>
+            </div>
+          </Card>
+        )}
+
         {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <p className="text-muted-foreground text-sm">
@@ -842,9 +867,9 @@ function ChatInner({
             </p>
           </div>
         ) : (
-          dedupedMessages.map(({ msg, index: i }) => (
+          messages.map((msg) => (
             <div
-              key={msg.id ?? i}
+              key={msg.id}
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div className="max-w-[80%] space-y-2">
@@ -855,166 +880,161 @@ function ChatInner({
                       : "bg-card"
                   }`}
                 >
-                  <p className="text-sm whitespace-pre-wrap">
-                    {messageText(msg) ||
-                      (streaming && msg.role === "assistant" ? (
-                        <span className="text-muted-foreground">
-                          <Loader2 className="inline h-3 w-3 animate-spin" />{" "}
-                          Thinking…
-                        </span>
-                      ) : (
-                        ""
-                      ))}
-                  </p>
+                  {msg.content ? (
+                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  ) : msg.role === "assistant" && msg.live ? (
+                    <p className="text-sm text-muted-foreground">
+                      <Loader2 className="inline h-3 w-3 animate-spin" /> Thinking…
+                    </p>
+                  ) : null}
                 </Card>
 
-                {msg.parts
-                  ?.map((part: AnyUIMessage, pi: number) => ({ part, pi }))
-                  .filter(({ part }: { part: AnyUIMessage }) => {
-                    if (part.type === "text") return false;
+                {msg.parts.map((part, pi) => {
+                  if (part.state === "approval-requested") {
                     return (
-                      part.state === "approval-requested" ||
-                      part.state === "approval-responded" ||
-                      (part.type.startsWith("tool-") && part.state === "complete")
+                      <Card
+                        key={pi}
+                        className="p-4 border-amber-500/50 bg-amber-50/50"
+                      >
+                        <div className="flex items-center gap-2 text-xs text-amber-700 mb-2">
+                          <ShieldAlert className="h-4 w-4" />
+                          <span className="font-medium">
+                            {toolLabel(part.type)} — requires approval
+                          </span>
+                        </div>
+                        <pre className="mt-2 text-xs whitespace-pre-wrap bg-background p-3 rounded-md max-h-48 overflow-auto">
+                          {JSON.stringify(part.input ?? {}, null, 2)}
+                        </pre>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            className="h-8"
+                            onClick={() => handleApprove(part)}
+                          >
+                            <ShieldCheck className="mr-1 h-3.5 w-3.5" />
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
+                            onClick={() => handleStartEdit(part)}
+                          >
+                            <Pencil className="mr-1 h-3.5 w-3.5" />
+                            Modify
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="h-8"
+                            onClick={() => handleReject(part)}
+                          >
+                            <X className="mr-1 h-3.5 w-3.5" />
+                            Reject
+                          </Button>
+                        </div>
+                      </Card>
                     );
-                  })
-                  .map(({ part, pi }: { part: AnyUIMessage; pi: number }) => {
-                    if (part.state === "approval-requested") {
-                      return (
-                        <Card
-                          key={pi}
-                          className="p-4 border-amber-500/50 bg-amber-50/50"
-                        >
-                          <div className="flex items-center gap-2 text-xs text-amber-700 mb-2">
-                            <ShieldAlert className="h-4 w-4" />
-                            <span className="font-medium">
-                              {toolLabel(part.type)} — requires approval
-                            </span>
-                          </div>
-                          <pre className="mt-2 text-xs whitespace-pre-wrap bg-background p-3 rounded-md max-h-48 overflow-auto">
-                            {JSON.stringify(part.input ?? {}, null, 2)}
+                  }
+                  if (
+                    part.state === "complete" ||
+                    part.state === "rejected" ||
+                    part.state === "error"
+                  ) {
+                    return (
+                      <Card key={pi} className="p-3 bg-muted/50">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                          <Wrench className="h-3 w-3" />
+                          <span className="font-medium">
+                            {toolLabel(part.type)}
+                            {part.state === "rejected" && " (rejected)"}
+                            {part.state === "error" && " (failed)"}
+                          </span>
+                        </div>
+                        <details className="mt-1">
+                          <summary className="cursor-pointer text-muted-foreground">
+                            Details
+                          </summary>
+                          <pre className="mt-1 text-xs whitespace-pre-wrap bg-background p-2 rounded max-h-48 overflow-auto">
+                            {JSON.stringify(
+                              { input: part.input, output: part.output },
+                              null,
+                              2
+                            )}
                           </pre>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <Button
-                              size="sm"
-                              className="h-8"
-                              onClick={() => handleApprove(i, pi)}
-                            >
-                              <ShieldCheck className="mr-1 h-3.5 w-3.5" />
-                              Approve
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-8"
-                              onClick={() => handleStartEdit(i, pi)}
-                            >
-                              <Pencil className="mr-1 h-3.5 w-3.5" />
-                              Modify
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              className="h-8"
-                              onClick={() => handleReject(i, pi)}
-                            >
-                              <X className="mr-1 h-3.5 w-3.5" />
-                              Reject
-                            </Button>
-                          </div>
-                        </Card>
-                      );
-                    }
-                    if (
-                      part.state === "approval-responded" ||
-                      (part.type.startsWith("tool-") && part.state === "complete")
-                    ) {
-                      return (
-                        <Card key={pi} className="p-3 bg-muted/50">
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-                            <Wrench className="h-3 w-3" />
-                            <span className="font-medium">
-                              {toolLabel(part.type)}
-                            </span>
-                          </div>
-                          <details className="mt-1">
-                            <summary className="cursor-pointer text-muted-foreground">
-                              Details
-                            </summary>
-                            <pre className="mt-1 text-xs whitespace-pre-wrap bg-background p-2 rounded max-h-48 overflow-auto">
-                              {JSON.stringify(
-                                { input: part.input, output: part.output },
-                                null,
-                                2
-                              )}
-                            </pre>
-                          </details>
-                        </Card>
-                      );
-                    }
-                    return null;
-                  })}
+                        </details>
+                      </Card>
+                    );
+                  }
+                  return null;
+                })}
               </div>
             </div>
           ))
         )}
 
-        {editing && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="w-full max-w-lg rounded-lg border bg-background p-4 shadow-lg">
-              <h3 className="text-sm font-semibold mb-1">Modify tool input</h3>
-              <p className="text-xs text-muted-foreground mb-2">
-                Edit the JSON directly, or describe the change in plain language
-                — the AI will apply it, then ask for approval again.
-              </p>
-              <textarea
-                value={editing.instruction}
-                onChange={(e) =>
-                  setEditing((prev) =>
-                    prev
-                      ? { ...prev, instruction: e.target.value, error: null }
-                      : prev
-                  )
-                }
-                rows={8}
-                placeholder="مثال: بدّل الموضوع إلى اجتماع عاجل وأضف كربون كوبي"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                spellCheck={false}
-                disabled={editing.loading}
-              />
-              {editing.error && (
-                <p className="mt-2 text-xs text-destructive">{editing.error}</p>
-              )}
-              <div className="mt-3 flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCancelEdit}
-                  disabled={editing.loading}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={handleModifySave}
-                  disabled={editing.loading || !editing.instruction.trim()}
-                >
-                  {editing.loading ? (
-                    <>
-                      <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                      Revising…
-                    </>
-                  ) : (
-                    "Revise input"
-                  )}
-                </Button>
-              </div>
-            </div>
+        {error && (
+          <div className="flex justify-center">
+            <Card className="p-3 border-destructive/50 bg-destructive/10">
+              <p className="text-xs text-destructive">{error}</p>
+            </Card>
           </div>
         )}
 
         <div ref={endRef} />
       </div>
+
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg rounded-lg border bg-background p-4 shadow-lg">
+            <h3 className="text-sm font-semibold mb-1">Modify tool input</h3>
+            <p className="text-xs text-muted-foreground mb-2">
+              Edit the JSON directly, or describe the change in plain language —
+              the AI will apply it, then ask for approval again.
+            </p>
+            <textarea
+              value={editing.instruction}
+              onChange={(e) =>
+                setEditing((prev) =>
+                  prev ? { ...prev, instruction: e.target.value, error: null } : prev
+                )
+              }
+              rows={8}
+              placeholder="مثال: بدّل الموضوع إلى اجتماع عاجل وأضف كربون كوبي"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              spellCheck={false}
+              disabled={editing.loading}
+            />
+            {editing.error && (
+              <p className="mt-2 text-xs text-destructive">{editing.error}</p>
+            )}
+            <div className="mt-3 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setEditing(null)}
+                disabled={editing.loading}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleModifySave}
+                disabled={editing.loading || !editing.instruction.trim()}
+              >
+                {editing.loading ? (
+                  <>
+                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                    Revising…
+                  </>
+                ) : (
+                  "Revise input"
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="mt-4 flex gap-2 border-t pt-4">
         <input
@@ -1022,12 +1042,15 @@ function ChatInner({
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onFocus={handleInputFocus}
-          placeholder="Ask about emails, calendar, files..."
-          disabled={streaming}
+          placeholder={
+            awaitingApproval
+              ? "Resolve the pending approval first…"
+              : "Ask about emails, calendar, files..."
+          }
+          disabled={inputDisabled}
           className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         />
-        <Button type="submit" disabled={streaming || !input.trim()}>
+        <Button type="submit" disabled={inputDisabled || !input.trim()}>
           {streaming ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (

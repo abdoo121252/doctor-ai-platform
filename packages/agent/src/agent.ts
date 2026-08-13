@@ -1,5 +1,6 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { streamText, generateText, isStepCount } from "ai";
+import type { LanguageModel } from "ai";
 import { createReadEmailsTool, createSendEmailTool } from "./tools/gmail";
 import { createReadCalendarTool, createCreateEventTool } from "./tools/calendar";
 import { createSearchDriveTool } from "./tools/drive";
@@ -21,7 +22,7 @@ const opencode = createOpenAICompatible({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-function getModel() {
+export function getModel(): LanguageModel {
   return opencode("deepseek-v4-flash");
 }
 
@@ -204,4 +205,93 @@ export function streamChatResponse({
     textStream: result.textStream,
     steps,
   };
+}
+
+/**
+ * A single model step for the manual chat loop: run one `streamText` step
+ * (stops after the first step) with a schema-only toolset so the SDK returns
+ * tool calls instead of executing them. The caller decides whether to execute
+ * a tool (sensitivity gate / approval) and feeds the tool result back as the
+ * next message. Returns the text stream plus the tool calls captured for this
+ * step (populated once the stream is fully consumed).
+ */
+export interface ChatStepToolCall {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+}
+
+export interface ChatStepResult {
+  textStream: AsyncIterable<string>;
+  toolCalls: ChatStepToolCall[];
+}
+
+export function runChatStep({
+  messages,
+  tools,
+}: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  messages: any[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tools: Record<string, any>;
+}): ChatStepResult {
+  const model = getModel();
+  const toolCalls: ChatStepToolCall[] = [];
+
+  const result = streamText({
+    model,
+    system: SYSTEM_PROMPT,
+    messages,
+    tools,
+    stopWhen: isStepCount(1),
+    onStepFinish: ({ toolCalls: calls }) => {
+      for (const c of calls) {
+        toolCalls.push({
+          toolCallId: c.toolCallId,
+          toolName: c.toolName,
+          input: c.input,
+        });
+      }
+    },
+  });
+
+  return { textStream: result.textStream, toolCalls };
+}
+
+/**
+ * Build a chat toolset for the manual loop: schema-only tools (so the SDK
+ * never auto-executes) plus a map of `name -> execute(input, toolCallId)`
+ * closures. Sensitivity is intentionally NOT applied here — the caller loads
+ * `toolSensitivity` separately and decides whether to execute or pause.
+ */
+export interface ChatTools {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  schemas: Record<string, any>;
+  executors: Record<
+    string,
+    (input: unknown, toolCallId: string) => Promise<unknown> | unknown
+  >;
+}
+
+export function buildChatTools(context: AgentContext): ChatTools {
+  const tools = buildTools(context) as Record<
+    string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    any
+  >;
+  const schemas: ChatTools["schemas"] = {};
+  const executors: ChatTools["executors"] = {};
+
+  for (const [name, t] of Object.entries(tools)) {
+    schemas[name] = {
+      description: t.description,
+      inputSchema: t.inputSchema ?? t.parameters,
+    };
+    if (typeof t.execute === "function") {
+      executors[name] = (input: unknown, toolCallId: string) =>
+        t.execute(input, { toolCallId });
+    }
+  }
+
+  return { schemas, executors };
 }

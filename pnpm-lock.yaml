@@ -26,9 +26,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@ai-sdk/react':
-        specifier: 4.0.60
-        version: 4.0.60(react@18.3.1)(zod@3.25.76)
       '@repo/agent':
         specifier: workspace:*
         version: link:../../packages/agent
@@ -44,9 +41,6 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.47.0
         version: 2.112.2(@opentelemetry/api@1.9.1)
-      '@trigger.dev/sdk':
-        specifier: 4.5.10
-        version: 4.5.10(ai@7.0.57(zod@3.25.76))(react@18.3.1)(zod@3.25.76)
       ai:
         specifier: ^7.0.57
         version: 7.0.57(zod@3.25.76)
@@ -210,12 +204,6 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/mcp@2.0.28':
-    resolution: {integrity: sha512-UGquNMQhWatxLnBm4GCBFOPTD/GhhrCYhxys9vDKfGCmxXACyi6gIA1vgxwc1sFuuK6ZxQwc+a28zUHiYrWYfA==}
-    engines: {node: '>=22'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
   '@ai-sdk/openai-compatible@3.0.27':
     resolution: {integrity: sha512-icGSoBDbFKZotUwehg7h/JjtD7arweeKfeDcsT9UsPY+YdwiT94JciD59bqAOAdNA3wlS+klW2vsaVLxTUUhbA==}
     engines: {node: '>=22'}
@@ -267,12 +255,6 @@ packages:
     peerDependenciesMeta:
       zod:
         optional: true
-
-  '@ai-sdk/react@4.0.60':
-    resolution: {integrity: sha512-O7grw8X1AYKSD4K1FqQYYPt83nf+297gb6lnOasrehcbury1Hs2nyfjUFK5G2ziJ4nCmg9GWNrftROQ5HEqbiw==}
-    engines: {node: '>=22'}
-    peerDependencies:
-      react: ^18 || ~19.0.1 || ~19.1.2 || ^19.2.1
 
   '@ai-sdk/ui-utils@1.2.11':
     resolution: {integrity: sha512-3zcwCc8ezzFlwp3ZD15wAPjf2Au4s3vAbKsXQVyhxODHcmu0iyPO2Eua6D/vicq/AUm/BAo60r97O6HU+EI0+w==}
@@ -3869,13 +3851,6 @@ snapshots:
       '@vercel/oidc': 3.2.0
       zod: 3.25.76
 
-  '@ai-sdk/mcp@2.0.28(zod@3.25.76)':
-    dependencies:
-      '@ai-sdk/provider': 4.0.6
-      '@ai-sdk/provider-utils': 5.0.24(zod@3.25.76)
-      pkce-challenge: 5.0.1
-      zod: 3.25.76
-
   '@ai-sdk/openai-compatible@3.0.27(zod@3.25.76)':
     dependencies:
       '@ai-sdk/provider': 4.0.7
@@ -3934,18 +3909,6 @@ snapshots:
       throttleit: 2.1.0
     optionalDependencies:
       zod: 3.25.76
-
-  '@ai-sdk/react@4.0.60(react@18.3.1)(zod@3.25.76)':
-    dependencies:
-      '@ai-sdk/mcp': 2.0.28(zod@3.25.76)
-      '@ai-sdk/provider': 4.0.6
-      '@ai-sdk/provider-utils': 5.0.24(zod@3.25.76)
-      ai: 7.0.57(zod@3.25.76)
-      react: 18.3.1
-      swr: 2.5.0(react@18.3.1)
-      throttleit: 2.1.0
-    transitivePeerDependencies:
-      - zod
 
   '@ai-sdk/ui-utils@1.2.11(zod@3.25.76)':
     dependencies:
