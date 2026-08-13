@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
     }
 
     const level = request.nextUrl.searchParams.get("level");
+    const q = request.nextUrl.searchParams.get("q");
     const limit = parseInt(request.nextUrl.searchParams.get("limit") ?? "100", 10);
 
     let query = supabase
@@ -22,6 +23,13 @@ export async function GET(request: NextRequest) {
 
     if (level) {
       query = query.eq("level", level);
+    }
+
+    if (q) {
+      const pattern = `%${q.replace(/%/g, "").trim()}%`;
+      if (pattern.length > 2) {
+        query = query.or(`message.ilike.${pattern},source.ilike.${pattern}`);
+      }
     }
 
     const { data, error } = await query;

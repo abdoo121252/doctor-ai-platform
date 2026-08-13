@@ -12,12 +12,14 @@ import {
   Settings,
   LogOut,
   Stethoscope,
+  Terminal,
 } from "lucide-react";
 
 const navItems = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/review", label: "Review", icon: ClipboardCheck },
   { href: "/tasks", label: "Tasks", icon: CalendarCheck },
+  { href: "/logs", label: "Logs", icon: Terminal },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

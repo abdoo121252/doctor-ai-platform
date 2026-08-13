@@ -17,7 +17,9 @@ supabase/.temp/
 .idea/
 
 # Local dev logs
-logs/
+/logs/
+apps/web/logs/
+apps/worker/logs/
 
 # Trigger.dev generated files
 .trigger/
