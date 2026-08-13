@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildChatTools, runChatStep, loadToolSensitivity } from "@repo/agent";
 import type { AgentContext } from "@repo/agent";
 import { generateId } from "ai";
-import { saveChatState } from "./chat-state";
+import { saveChatState, wrapToolOutput } from "./chat-state";
 
 const MAX_STEPS = 10;
 
@@ -63,6 +63,7 @@ export async function runChatTurn({
 
     if (toolCalls.length === 0) {
       // Final text, no pending tool call — the turn is complete.
+      messages.push({ role: "assistant", content: stepText });
       await persistAssistantTurn(
         supabase,
         doctorId,
@@ -177,7 +178,7 @@ export async function runChatTurn({
           type: "tool-result",
           toolCallId: call.toolCallId,
           toolName: call.toolName,
-          output,
+          output: wrapToolOutput(output),
         },
       ],
     });

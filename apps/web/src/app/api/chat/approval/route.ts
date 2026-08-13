@@ -9,6 +9,7 @@ import {
   logToolStart,
   logToolFinish,
   resolveToolPart,
+  wrapToolOutput,
 } from "@/lib/chat-state";
 import { runChatTurn } from "@/lib/chat-runner";
 
@@ -154,7 +155,7 @@ export async function POST(request: Request) {
           type: "tool-result",
           toolCallId: pending.toolCallId,
           toolName: pending.toolName,
-          output: resolvedOutput,
+          output: wrapToolOutput(resolvedOutput),
         },
       ],
     });

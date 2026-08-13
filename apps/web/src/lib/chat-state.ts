@@ -65,6 +65,25 @@ export async function saveChatState(
   }
 }
 
+/**
+ * Wrap a raw tool output into the AI SDK v7 `ToolResultOutput` shape. The SDK
+ * validates `tool-result` content against a discriminated union on `type`
+ * (`{ type: 'json' | 'text' | 'error-json' | ... , value }`), so feeding a raw
+ * object (e.g. `{ sent: true }`) into the model context throws
+ * `InvalidPromptError` and kills the turn.
+ */
+export function wrapToolOutput(output: unknown): Record<string, unknown> {
+  if (output === undefined || output === null) {
+    return { type: "text", value: "" };
+  }
+  try {
+    const value = JSON.parse(JSON.stringify(output));
+    return { type: "json", value };
+  } catch {
+    return { type: "text", value: String(output) };
+  }
+}
+
 export async function logToolStart(
   supabase: SupabaseClient,
   {
