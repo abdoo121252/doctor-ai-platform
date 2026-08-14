@@ -5,6 +5,26 @@ import {
 } from "@repo/shared";
 
 /**
+ * In-memory cache of tool-sensitivity settings, keyed by doctor id.
+ * Settings rarely change, so we avoid a DB round-trip on every chat
+ * message. Invalidated immediately when the doctor toggles a setting
+ * (see `invalidateToolSensitivityCache`) and guarded by a short TTL as
+ * a safety net for multi-instance deployments.
+ */
+const sensitivityCache = new Map<
+  string,
+  { settings: Record<AgentToolName, boolean>; at: number }
+>();
+
+/** How long a cached entry stays fresh before we re-fetch (ms). */
+const CACHE_TTL_MS = 60_000;
+
+/** Drop the cached settings for a doctor (call after a toggle/upsert). */
+export function invalidateToolSensitivityCache(doctorId: string): void {
+  sensitivityCache.delete(doctorId);
+}
+
+/**
  * Load the doctor's tool-sensitivity settings from the
  * `tool_sensitivity_settings` table and merge them over the defaults.
  *
@@ -20,6 +40,11 @@ export async function loadToolSensitivity(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase?: any
 ): Promise<Record<AgentToolName, boolean>> {
+  const cached = sensitivityCache.get(doctorId);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return cached.settings;
+  }
+
   const result = { ...TOOL_SENSITIVITY_DEFAULTS } as Record<
     AgentToolName,
     boolean
@@ -55,6 +80,7 @@ export async function loadToolSensitivity(
           result[row.tool_name as AgentToolName] = row.sensitive;
         }
       }
+      sensitivityCache.set(doctorId, { settings: result, at: Date.now() });
     }
   } catch (err) {
     console.error(

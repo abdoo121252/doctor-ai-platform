@@ -15,7 +15,10 @@ export type {
   ChatTools,
 } from "./agent";
 export type { AgentContext } from "./context";
-export { loadToolSensitivity } from "./tool-sensitivity";
+export {
+  loadToolSensitivity,
+  invalidateToolSensitivityCache,
+} from "./tool-sensitivity";
 
 export { getOAuthUrl, exchangeCodeForTokens } from "./google/auth";
 export {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase-server";
+import { invalidateToolSensitivityCache } from "@repo/agent";
 import {
   AGENT_TOOL_NAMES,
   TOOL_SENSITIVITY_DEFAULTS,
@@ -80,6 +81,8 @@ export async function PUT(request: Request) {
     if (error) {
       return NextResponse.json({ error: "Failed to save" }, { status: 500 });
     }
+
+    invalidateToolSensitivityCache(auth.user.id);
 
     return NextResponse.json({ ok: true, toolName, sensitive });
   } catch {

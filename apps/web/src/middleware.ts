@@ -2,6 +2,20 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { logEdgeRequest } from "@/lib/edge-logger";
 
+/** Decode the `sub` claim from a Supabase access-token JWT (no network). */
+function decodeJwtSub(token: string): string | null {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return null;
+    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    const obj = JSON.parse(atob(padded));
+    return typeof obj.sub === "string" ? obj.sub : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next();
 
@@ -24,12 +38,18 @@ export async function middleware(request: NextRequest) {
     }
   );
 
+  // getSession() reads the cookie locally (fast). We intentionally avoid
+  // touching `session.user` here — auth-js wraps it in a Proxy that emits
+  // a "could be insecure" warning on property access. The user id is decoded
+  // from the access-token JWT `sub` claim instead.
   const { data: { session } } = await supabase.auth.getSession();
 
   // Log every request (fire-and-forget). Skip the logs endpoints so the
   // logs page's own polling doesn't spam the table.
   if (!request.nextUrl.pathname.startsWith("/api/logs")) {
-    const userId = session?.user?.id ?? null;
+    const userId = session?.access_token
+      ? decodeJwtSub(session.access_token)
+      : null;
     logEdgeRequest({
       level: "info",
       source: "request",
