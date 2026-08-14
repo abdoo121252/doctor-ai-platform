@@ -71,6 +71,23 @@ function uid(): string {
   return `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+// Module-level cache of loaded session transcripts so switching back to an
+// already-viewed session is instant. Cleared per-session whenever it changes.
+const sessionCache = new Map<string, LoadedData>();
+
+function normalizeParts(parts: ChatPart[] | string | undefined): ChatPart[] {
+  if (Array.isArray(parts)) return parts;
+  if (typeof parts === "string") {
+    try {
+      const parsed = JSON.parse(parts);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 export default function ChatPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -118,6 +135,7 @@ export default function ChatPage() {
   async function handleDeleteSession(id: string) {
     try {
       await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+      sessionCache.delete(id);
       setSessions((prev) => prev.filter((s) => s.id !== id));
       if (activeSessionId === id) {
         const remaining = sessions.filter((s) => s.id !== id);
@@ -353,6 +371,48 @@ function ChatView({
   const endRef = useRef<HTMLDivElement>(null);
   const skipNextFetchRef = useRef<string | null>(null);
 
+  const applyLoaded = useCallback((data: LoadedData) => {
+    const msgs: ChatMsg[] = (data.messages ?? []).map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content ?? "",
+      parts: normalizeParts(m.parts),
+    }));
+
+    // If the state is awaiting approval but the transcript has no pending
+    // card (e.g. old row shape), synthesize one from chat_state.
+    if (data.state?.pendingApproval) {
+      setAwaitingApproval(true);
+      const has = msgs.some((m) =>
+        m.parts.some(
+          (p) =>
+            p.state === "approval-requested" &&
+            p.approvalId === data.state.pendingApproval!.approvalId
+        )
+      );
+      if (!has && msgs.length > 0) {
+        const last = msgs[msgs.length - 1];
+        if (last && last.role === "assistant") {
+          last.parts = [
+            ...last.parts,
+            {
+              type: `tool-${data.state.pendingApproval.toolName}`,
+              toolName: data.state.pendingApproval.toolName,
+              toolCallId: data.state.pendingApproval.toolCallId,
+              approvalId: data.state.pendingApproval.approvalId,
+              state: "approval-requested",
+              input: data.state.pendingApproval.input,
+            },
+          ];
+        }
+      }
+    } else {
+      setAwaitingApproval(false);
+    }
+    setCrashedToolCalls(data.state?.crashedToolCalls ?? []);
+    setMessages(msgs);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     if (!sessionId) {
@@ -369,50 +429,20 @@ function ChatView({
       setLoaded(true);
       return;
     }
+    // Serve a previously-loaded session from cache for an instant switch.
+    const cached = sessionCache.get(sessionId);
+    if (cached) {
+      applyLoaded(cached);
+      setLoaded(true);
+      return;
+    }
     setLoaded(false);
     fetch(`/api/sessions/${sessionId}/messages`)
       .then((res) => res.json())
       .then((data: LoadedData) => {
         if (cancelled) return;
-        const msgs: ChatMsg[] = (data.messages ?? []).map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content ?? "",
-          parts: normalizeParts(m.parts),
-        }));
-
-        // If the state is awaiting approval but the transcript has no pending
-        // card (e.g. old row shape), synthesize one from chat_state.
-        if (data.state?.pendingApproval) {
-          setAwaitingApproval(true);
-          const has = msgs.some((m) =>
-            m.parts.some(
-              (p) =>
-                p.state === "approval-requested" &&
-                p.approvalId === data.state.pendingApproval!.approvalId
-            )
-          );
-          if (!has && msgs.length > 0) {
-            const last = msgs[msgs.length - 1];
-            if (last && last.role === "assistant") {
-              last.parts = [
-                ...last.parts,
-                {
-                  type: `tool-${data.state.pendingApproval.toolName}`,
-                  toolName: data.state.pendingApproval.toolName,
-                  toolCallId: data.state.pendingApproval.toolCallId,
-                  approvalId: data.state.pendingApproval.approvalId,
-                  state: "approval-requested",
-                  input: data.state.pendingApproval.input,
-                },
-              ];
-            }
-          }
-        } else {
-          setAwaitingApproval(false);
-        }
-        setCrashedToolCalls(data.state?.crashedToolCalls ?? []);
-        setMessages(msgs);
+        sessionCache.set(sessionId, data);
+        applyLoaded(data);
       })
       .catch(() => {
         if (!cancelled) setMessages([]);
@@ -423,26 +453,11 @@ function ChatView({
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [sessionId, applyLoaded]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streaming]);
-
-  function normalizeParts(
-    parts: ChatPart[] | string | undefined
-  ): ChatPart[] {
-    if (Array.isArray(parts)) return parts;
-    if (typeof parts === "string") {
-      try {
-        const parsed = JSON.parse(parts);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  }
 
   function toolLabel(partType: string) {
     return partType.replace(/^tool-/, "");
@@ -622,6 +637,7 @@ function ChatView({
       setMessages((prev) =>
         prev.map((m) => (m.live ? { ...m, live: false } : m))
       );
+      if (resolvedSessionId) sessionCache.delete(resolvedSessionId);
     }
   }
 
@@ -724,6 +740,7 @@ function ChatView({
       setMessages((prev) =>
         prev.map((m) => (m.live ? { ...m, live: false } : m))
       );
+      sessionCache.delete(sessionId);
     }
   }
 
@@ -769,6 +786,7 @@ function ChatView({
       setMessages((prev) =>
         prev.map((m) => (m.live ? { ...m, live: false } : m))
       );
+      sessionCache.delete(sessionId);
     }
   }
 
