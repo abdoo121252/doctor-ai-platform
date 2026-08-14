@@ -207,27 +207,25 @@ export async function findCrashedToolExecutions(
   supabase: SupabaseClient,
   sessionId: string
 ): Promise<string[]> {
-  const { data: started } = await supabase
+  const { data } = await supabase
     .from("tool_execution_log")
-    .select("tool_call_id")
+    .select("tool_call_id, status")
     .eq("session_id", sessionId)
-    .eq("status", "started");
+    .in("status", ["started", "completed", "failed"]);
 
-  if (!started || started.length === 0) return [];
+  if (!data || data.length === 0) return [];
 
-  const toolCallIds = Array.from(
-    new Set(started.map((r) => (r as { tool_call_id: string }).tool_call_id))
-  );
-
-  const { data: finished } = await supabase
-    .from("tool_execution_log")
-    .select("tool_call_id")
-    .eq("session_id", sessionId)
-    .in("status", ["completed", "failed"]);
-
+  const rows = data as Array<{ tool_call_id: string; status: string }>;
   const finishedIds = new Set(
-    (finished ?? []).map((r) => (r as { tool_call_id: string }).tool_call_id)
+    rows.filter((r) => r.status !== "started").map((r) => r.tool_call_id)
   );
 
-  return toolCallIds.filter((id) => !finishedIds.has(id));
+  return Array.from(
+    new Set(
+      rows
+        .filter((r) => r.status === "started")
+        .map((r) => r.tool_call_id)
+        .filter((id) => !finishedIds.has(id))
+    )
+  );
 }

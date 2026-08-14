@@ -24,42 +24,44 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    trace.phase("session-lookup");
-    const { data: session } = await supabase
-      .from("chat_sessions")
-      .select("id, title, public_access_token, last_event_id")
-      .eq("id", params.id)
-      .eq("doctor_id", auth.user.id)
-      .single();
+    // All queries are independent once we have the doctor id — run them in
+    // parallel to avoid sequential Supabase round-trips on session switch.
+    trace.phase("load");
+    const [sessionResult, messagesResult, state, crashedToolCalls] =
+      await Promise.all([
+        supabase
+          .from("chat_sessions")
+          .select("id, title, public_access_token, last_event_id")
+          .eq("id", params.id)
+          .eq("doctor_id", auth.user.id)
+          .single(),
+        supabase
+          .from("conversations")
+          .select("id, role, content, parts, created_at")
+          .eq("session_id", params.id)
+          .order("created_at", { ascending: true }),
+        loadChatState(supabase, params.id),
+        findCrashedToolExecutions(supabase, params.id),
+      ]);
+
+    const session = sessionResult.data;
+    const { data: messages, error } = messagesResult;
 
     if (!session) {
       trace.info("session not found", { sessionId: params.id });
-      trace.end({ phase: "session-lookup", result: "not_found" });
+      trace.end({ phase: "load", result: "not_found" });
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
     trace.info("session found", { title: session.title });
 
-    trace.phase("messages");
-    const { data: messages, error } = await supabase
-      .from("conversations")
-      .select("id, role, content, parts, created_at")
-      .eq("session_id", params.id)
-      .order("created_at", { ascending: true });
-
     if (error) {
       trace.error("Load messages failed", error);
-      trace.end({ phase: "messages", result: "error" });
+      trace.end({ phase: "load", result: "error" });
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     const msgs = messages ?? [];
     trace.info("messages loaded", { count: msgs.length });
-
-    const state = await loadChatState(supabase, params.id);
-    const crashedToolCalls = await findCrashedToolExecutions(
-      supabase,
-      params.id
-    );
 
     trace.end({ phase: "complete", sessionId: params.id, count: msgs.length });
     return NextResponse.json({
