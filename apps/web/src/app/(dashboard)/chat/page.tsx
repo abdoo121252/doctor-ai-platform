@@ -78,9 +78,7 @@ export default function ChatPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [isNewChat, setIsNewChat] = useState(false);
-  const [pendingFirstMessage, setPendingFirstMessage] = useState<string | null>(
-    null
-  );
+  const [chatKey, setChatKey] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const fetchSessions = useCallback(async () => {
@@ -106,14 +104,15 @@ export default function ChatPage() {
 
   function handleNewSession() {
     setActiveSessionId(null);
+    setChatKey((k) => k + 1);
     setIsNewChat(true);
     setTimeout(() => inputRef.current?.focus(), 50);
   }
 
   function handleSelectSession(id: string) {
     setActiveSessionId(id);
+    if (id !== activeSessionId) setChatKey((k) => k + 1);
     setIsNewChat(false);
-    setPendingFirstMessage(null);
   }
 
   async function handleDeleteSession(id: string) {
@@ -128,6 +127,7 @@ export default function ChatPage() {
           setActiveSessionId(null);
           setIsNewChat(true);
         }
+        setChatKey((k) => k + 1);
       }
     } catch {
       // silently fail
@@ -291,14 +291,12 @@ export default function ChatPage() {
         </div>
 
         <ChatView
-          key={activeSessionId ?? "new"}
+          key={chatKey}
           sessionId={activeSessionId}
-          pendingFirstMessage={pendingFirstMessage}
           inputRef={inputRef}
-          onSessionCreated={(id, title, firstMessage) => {
+          onSessionCreated={(id, title) => {
             setIsNewChat(false);
             setActiveSessionId(id);
-            setPendingFirstMessage(firstMessage ?? null);
             setSessions((prev) => [
               {
                 id,
@@ -330,15 +328,13 @@ export default function ChatPage() {
 
 function ChatView({
   sessionId,
-  pendingFirstMessage,
   inputRef,
   onSessionCreated,
   onSessionUpdated,
 }: {
   sessionId: string | null;
-  pendingFirstMessage: string | null;
   inputRef: React.RefObject<HTMLInputElement>;
-  onSessionCreated: (id: string, title: string, firstMessage?: string) => void;
+  onSessionCreated: (id: string, title: string) => void;
   onSessionUpdated: (id: string, lastMessage?: string) => void;
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -355,7 +351,7 @@ function ChatView({
     error: string | null;
   } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
-  const sentFirst = useRef(false);
+  const skipNextFetchRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -363,6 +359,13 @@ function ChatView({
       setMessages([]);
       setCrashedToolCalls([]);
       setAwaitingApproval(false);
+      setLoaded(true);
+      return;
+    }
+    // This session was just created by a message we already streamed, so its
+    // transcript is already on screen — skip the refetch to avoid a flash.
+    if (skipNextFetchRef.current === sessionId) {
+      skipNextFetchRef.current = null;
       setLoaded(true);
       return;
     }
@@ -425,15 +428,6 @@ function ChatView({
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streaming]);
-
-  // Auto-send the pending first message for a brand-new chat.
-  useEffect(() => {
-    if (pendingFirstMessage && sessionId && !sentFirst.current) {
-      sentFirst.current = true;
-      void sendMessage(pendingFirstMessage);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingFirstMessage, sessionId]);
 
   function normalizeParts(
     parts: ChatPart[] | string | undefined
@@ -611,7 +605,8 @@ function ChatView({
             if (!resolvedSessionId && typeof event.sessionId === "string") {
               resolvedSessionId = event.sessionId;
               const title = text.length > 60 ? text.slice(0, 57) + "..." : text;
-              onSessionCreated(event.sessionId, title, text);
+              skipNextFetchRef.current = event.sessionId;
+              onSessionCreated(event.sessionId, title);
             }
             onSessionUpdated(resolvedSessionId ?? "", text);
             break;
