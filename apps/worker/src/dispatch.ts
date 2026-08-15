@@ -41,6 +41,37 @@ export async function forwardToAutomation(
   }
 }
 
+/**
+ * Ping the Vercel poll orchestrator. The 5-min trigger.dev task does nothing
+ * else — all event polling / filtering / agent execution lives on Vercel.
+ */
+export async function pingAutomationPoll(): Promise<{
+  ok: boolean;
+  status?: number;
+}> {
+  const { baseUrl, secret } = getAutomationConfig();
+  if (!secret) {
+    console.error("[dispatch] AUTOMATION_SECRET is not set");
+    return { ok: false };
+  }
+
+  try {
+    const res = await fetch(`${baseUrl}/api/automation/poll`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(300_000),
+    });
+    return { ok: res.ok, status: res.status };
+  } catch (err) {
+    console.error("[dispatch] Poll ping failed:", err);
+    return { ok: false };
+  }
+}
+
 interface EventTriggerRow {
   id: string;
   name: string;

@@ -2,7 +2,7 @@
 
 ## Stack
 - **Framework:** Next.js 14+ (App Router) with Tailwind CSS + shadcn/ui components
-- **Execution (split):** **chat** runs on Next.js API routes — `/api/chat` is a manual stateless loop (no Trigger.dev). **cron** / **event** still run on Trigger.dev v3 (serverless tasks); Trigger.dev approval uses polling, NOT `wait.createToken` (see rule 6).
+- **Execution (split):** ALL agent execution runs on Vercel (Next.js API routes). **chat** = `/api/chat` manual stateless loop (no Trigger.dev). **cron** / **event** = Trigger.dev v3 is a THIN SCHEDULER ONLY: the 15-min `doctor-scheduled-session` cron checks the DB for due scheduled tasks and forwards each to Vercel `/api/automation/run`; the 5-min `check-event-triggers` pings Vercel `/api/automation/poll`, which polls all users' Gmail/Calendar/Drive in parallel, applies the deterministic filter, and forwards matches to `/api/automation/run`. The LLM never runs on Trigger.dev. Approval is a Vercel-side pause/resume (`chat_state` + `approval_requests`), NOT `wait.createToken` (see rule 2).
 - **Agent:** `ai` SDK v7 (`streamText` + `streamChatResponse()` in `packages/agent/src/agent.ts`) — dynamic agent sessions, no pre-scripted workflows. Chat streams over SSE from the Next.js route. Model: `deepseek-v4-flash` via `https://opencode.ai/zen/go/v1`
 - **Database:** Supabase (Postgres) with RLS on every `doctor_id`-scoped table
 - **Auth:** Supabase Auth (Google OAuth for login — separate from Google API OAuth in Phase 5)
@@ -14,7 +14,7 @@
 ```
 doctor-ai-platform/
 ├── apps/web/          # Next.js dashboard (App Router)
-├── apps/worker/       # Trigger.dev tasks (agent runs inside)
+├── apps/worker/       # Trigger.dev scheduler only (cron/ping → Vercel; no agent)
 ├── packages/db/       # Supabase client, types, Zod schemas
 ├── packages/agent/    # AI agent (ai SDK) + tool definitions
 ├── packages/shared/   # Types, constants (SessionType, ApprovalStatus, etc.)
@@ -98,7 +98,7 @@ pnpm test:chat     # INTERACTIVE conversation with the agent via POST /api/chat 
 ## Architecture rules (do NOT violate these)
 
 ### 1. No fixed workflows
-Every session (chat/cron/event) spawns a **fresh dynamic AI agent session** — the agent decides steps itself based on instructions + tools + context. `cron`/`event` use `streamChatResponse()` (`streamText` + `stopWhen: isStepCount(10)`, full tools with `execute`) and `generateChatResponse()` is its non-streaming wrapper. The **chat** path uses a manual stateless loop instead: `runChatStep()` (single `streamText` step, schema-only tools, `stopWhen: isStepCount(1)`) driven by `runChatTurn()` in `apps/web/src/lib/chat-runner.ts`, which executes non-sensitive tools inline and pauses on sensitive ones for approval.
+Every session (chat/cron/event) spawns a **fresh dynamic AI agent session** — the agent decides steps itself based on instructions + tools + context. Both paths use the same manual stateless loop (`runChatStep()`: single `streamText` step, schema-only tools, `stopWhen: isStepCount(1)`). **chat** is driven by `runChatTurn()` in `apps/web/src/lib/chat-runner.ts`; **cron**/**event** are driven by `runAutomationTurn()` in `apps/web/src/lib/automation-runner.ts` (loop capped at `MAX_STEPS = 10`). Both execute non-sensitive tools inline and pause on the first sensitive tool. All on Vercel.
 
 ### 1b. Model context MUST be valid AI SDK v7 `ModelMessage[]`
 The stateless loop feeds the full history back into `streamText` on every step, and persists it in `chat_state.messages`. AI SDK v7 validates this array against `toolModelMessageSchema`, which requires every tool-result's `output` to be a **discriminated union on `type`** (`{ type: 'json' | 'text' | 'error-json' | 'error-text' | 'content' | 'execution-denied', value }`). Passing a raw object (e.g. `{ sent: true }`) throws `InvalidPromptError`, so the resumed loop and every later turn return nothing. Always wrap tool outputs with `wrapToolOutput()` (in `apps/web/src/lib/chat-state.ts`) before pushing them into model messages — both the inline tool-execution path in `chat-runner.ts` and the approval path in `app/api/chat/approval/route.ts`. The SSE `tool-result` event may still carry the raw output (it's for the UI), but the `messages` pushed for the model/persistence must be wrapped. Also push the assistant's final text back as `{ role: "assistant", content: stepText }` so the model keeps its own replies in context.
@@ -106,10 +106,10 @@ The stateless loop feeds the full history back into `streamText` on every step, 
 ### 2. Approval gate = code-level, not LLM-level
 Sensitive/non-sensitive classification is loaded per-doctor (`loadToolSensitivity`) and enforced in code — the LLM cannot bypass it:
 - **chat** → `runChatTurn` pauses on a sensitive tool, persists the full context + `pending_approval` in `chat_state`, and emits an `approval` SSE event; the doctor Approves/Rejects/Modifies via `POST /api/chat/approval`.
-- **cron** / **event** → `ctx.requestApproval()` pauses via Trigger.dev `wait.for` polling (exponential backoff, 10s → 300s max). No native wait tokens in this SDK version — polling-based.
+- **cron** / **event** → `runAutomationTurn` pauses by writing `chat_state.status = awaiting_approval` + `pending_approval` and inserting an `approval_requests` row (surfaces on `/review`); the doctor approves/rejects via `PATCH /api/approval/[id]`, which inline-resumes via `resumeAutomationTurn`. Sensitivity is per automation: override (`automation_tool_overrides`) → general (`tool_sensitivity_settings`) → defaults.
 
 ### 3. Context-driven tools (factory pattern)
-All tools are factory functions (`createSendEmailTool(ctx)`, etc.) that accept `AgentContext`. Agent context carries `doctorId`, `sessionType`, and optional `requestApproval` handler (injected by Trigger.dev task for automated sessions, left undefined for chat).
+All tools are factory functions (`createSendEmailTool(ctx)`, etc.) that accept `AgentContext`. Agent context carries `doctorId`, `sessionType`, `sessionId`, and the Supabase client. Chat and automation (cron/event) sessions both run on Vercel and pass the same context shape.
 
 ### 4. RLS on ALL tables
 Every table has `doctor_id` and RLS policy `auth.uid() = doctor_id`. Never query without the auth context — data isolation is DB-level, not app-level.
@@ -120,8 +120,8 @@ Every table has `doctor_id` and RLS policy `auth.uid() = doctor_id`. Never query
   - **Google:** `google_connections` table + `packages/agent/src/google/` (scopes: Gmail, Calendar, Drive, Sheets)
   - **Microsoft:** `microsoft_connections` table + `packages/agent/src/microsoft/` (scopes: `Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.ReadWrite User.Read offline_access`, tenant `common`, Graph v1.0). Env: `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_REDIRECT_URI`. Tokens encrypted with the same `GOOGLE_ENCRYPTION_KEY` (AES-GCM). Callback public in middleware.
 
-### 6. Approval uses polling, not wait tokens
-Trigger.dev SDK v3.3.0 does not have `wait.createToken`/`forToken`/`completeToken`. Approval is implemented with `wait.for({ seconds: N })` + Supabase polling. The Next.js API route updates approval status in DB, the polling loop detects it. Exponential backoff: 10s → 300s. No timeout — polls indefinitely until approved/rejected.
+### 6. Automation runs entirely on Vercel (no Trigger.dev wait tokens)
+The agent never runs on Trigger.dev. Trigger.dev only schedules (15-min cron DB-check → forward, 5-min ping) and forwards to Vercel. Approval pause/resume is Vercel-side: `runAutomationTurn` writes `chat_state.status = awaiting_approval` + an `approval_requests` row; `PATCH /api/approval/[id]` resumes. No `wait.for` polling anymore.
 
 ## File signposts
 | Concern | Path |
@@ -192,9 +192,16 @@ Trigger.dev SDK v3.3.0 does not have `wait.createToken`/`forToken`/`completeToke
 | Tool sensitivity settings UI | `apps/web/src/app/(dashboard)/settings/tools/page.tsx` |
 | Tool sensitivity loader (agent) | `packages/agent/src/tool-sensitivity.ts` |
 | Tool sensitivity migration | `supabase/migrations/00005_tool_sensitivity.sql` |
-| Trigger.dev approval handler | `apps/worker/src/approval-handler.ts` |
-| Cron task | `apps/worker/src/trigger/cron.ts` |
-| Event task | `apps/worker/src/trigger/events.ts` |
+| Cron scheduler (15-min → Vercel) | `apps/worker/src/trigger/cron.ts` |
+| Event poll scheduler (5-min ping → Vercel) | `apps/worker/src/trigger/event-poll.ts` |
+| Event webhook forwarder (future push) | `apps/worker/src/trigger/events.ts` |
+| Trigger.dev dispatch helpers | `apps/worker/src/dispatch.ts` (`forwardToAutomation`, `dispatchEventItem`, `pingAutomationPoll`) |
+| Cron matcher | `apps/worker/src/cron-match.ts` |
+| Automation run API (agent, secret-protected) | `apps/web/src/app/api/automation/run/route.ts` |
+| Automation poll API (event polling, secret-protected) | `apps/web/src/app/api/automation/poll/route.ts` |
+| Automation overrides API | `apps/web/src/app/api/automation/overrides/route.ts` |
+| Automation shared handler | `apps/web/src/lib/automation-dispatch.ts` (`runAutomationPayload`) |
+| Automation runner (cron/event loop) | `apps/web/src/lib/automation-runner.ts` (`runAutomationTurn`, `resumeAutomationTurn`) |
 
 ## Phase conventions
 - **Phase 5:** All tools call real Google APIs via `googleapis` (Gmail, Calendar, Drive, Sheets). Use `getGoogleAuth(doctorId, supabaseClient?)` → fetches encrypted refresh token from `google_connections`, creates OAuth2 client, auto-refreshes tokens. Pass the caller's Supabase client when available so it works without `SUPABASE_SERVICE_KEY`.
@@ -219,3 +226,4 @@ Trigger.dev SDK v3.3.0 does not have `wait.createToken`/`forToken`/`completeToke
 - **Modify = AI rewrite of tool input (NEW — 2026-08-11):** the Modify flow is NOT a direct JSON edit anymore. The doctor types a free-text instruction (Arabic supported), the web UI calls `POST /api/chat/modify-tool` → `rewriteToolInput({ toolName, input, instruction })` (uses `generateText` on the same `deepseek-v4-flash` model), then updates the local approval card's `input` (marked `revised`) and the subsequent Approve sends `{ approved: true, input: revised }` to `POST /api/chat/approval`, which applies the revised input to the pending tool-call before executing it.
 - **KNOWN BUG — approval round-trip (RESOLVED by removal):** the old `chat.agent` approval round-trip threw `MissingToolResultsError` on approve (the `approved` flag was dropped from the `tool-approval-response` part in the Trigger.dev wire/merge). This path is GONE — the new stateless loop executes/rejects the tool in `POST /api/chat/approval` directly and feeds the result back as a normal `tool` model message, so there is no SDK approval part to lose.
 - **Never run `trigger.dev` from PowerShell** (kills WSL node_modules symlinks). Always: `cd "/mnt/c/DR asis/doctor-ai-platform/apps/worker" && pnpm dev` from WSL. The `trigger.dev` package bin is `trigger` (package.json `"dev": "trigger dev"`).
+- **Event polling moved to Vercel (NEW — 2026-08-15):** the 5-min "webhook simulator" no longer polls on Trigger.dev. Trigger.dev is now a THIN SCHEDULER ONLY for both automation types: the 15-min `doctor-scheduled-session` cron checks the DB for due tasks and forwards to Vercel `/api/automation/run`; the 5-min `check-event-triggers` pings Vercel `/api/automation/poll`. `/api/automation/poll` is ONE function that polls ALL users' Gmail/Calendar/Drive in parallel (`Promise.all`), applies the deterministic filter (`doesEventMatchFilter`), and forwards each match to `/api/automation/run` (a separate function with its own 300s budget) which does the semantic filter (`filterMatchesCondition`) + dedupe (`event_trigger_seen`) + agent. Extracted the shared handler `runAutomationPayload` into `apps/web/src/lib/automation-dispatch.ts`; `/api/automation/run` now delegates to it. Added `pingAutomationPoll` to `apps/worker/src/dispatch.ts`. Deleted `apps/worker/src/approval-handler.ts`. Env: `AUTOMATION_SECRET` + `AUTOMATION_BASE_URL` (worker) and `AUTOMATION_SECRET` (Vercel). Vercel cron is NOT used — Hobby cron is capped at once/day, so Trigger.dev remains the clock.
