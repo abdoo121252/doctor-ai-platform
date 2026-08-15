@@ -2,6 +2,7 @@ import {
   AGENT_TOOL_NAMES,
   TOOL_SENSITIVITY_DEFAULTS,
   type AgentToolName,
+  type AutomationType,
 } from "@repo/shared";
 
 /**
@@ -85,6 +86,60 @@ export async function loadToolSensitivity(
   } catch (err) {
     console.error(
       "[tool-sensitivity] Failed to load settings, using defaults:",
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+
+  return result;
+}
+
+/**
+ * Resolve the tool-sensitivity map for a specific automation context.
+ *
+ * Order: per-automation override (`automation_tool_overrides`) -> general
+ * (`tool_sensitivity_settings`) -> defaults. A row in the override table wins
+ * over everything else for that automation + tool; missing rows inherit the
+ * general map (same as chat).
+ */
+export async function loadAutomationSensitivity(
+  doctorId: string,
+  automationType: AutomationType,
+  automationId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase?: any
+): Promise<Record<AgentToolName, boolean>> {
+  const base = await loadToolSensitivity(doctorId, supabase);
+  const result = { ...base } as Record<AgentToolName, boolean>;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let client: any = supabase;
+  if (!client) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createClient } = require("@supabase/supabase-js");
+    client = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_KEY!
+    );
+  }
+
+  try {
+    const { data } = await client
+      .from("automation_tool_overrides")
+      .select("tool_name, sensitive")
+      .eq("doctor_id", doctorId)
+      .eq("automation_type", automationType)
+      .eq("automation_id", automationId);
+
+    if (Array.isArray(data)) {
+      for (const row of data as Array<{ tool_name: string; sensitive: boolean }>) {
+        if ((AGENT_TOOL_NAMES as readonly string[]).includes(row.tool_name)) {
+          result[row.tool_name as AgentToolName] = row.sensitive;
+        }
+      }
+    }
+  } catch (err) {
+    console.error(
+      "[tool-sensitivity] Failed to load automation overrides, using general:",
       err instanceof Error ? err.message : String(err)
     );
   }

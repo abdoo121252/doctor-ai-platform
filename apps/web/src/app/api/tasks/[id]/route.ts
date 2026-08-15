@@ -21,6 +21,7 @@ export async function PATCH(
     if (body.cron_expression !== undefined) updates.cron_expression = body.cron_expression;
     if (body.instructions !== undefined) updates.instructions = body.instructions;
     if (body.enabled !== undefined) updates.enabled = body.enabled;
+    if (body.timezone !== undefined) updates.timezone = body.timezone;
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 });
@@ -64,6 +65,14 @@ export async function DELETE(
     if (error) {
       return NextResponse.json({ error: "Task not found" }, { status: 404 });
     }
+
+    // Clean up any per-automation overrides for this task.
+    await supabase
+      .from("automation_tool_overrides")
+      .delete()
+      .eq("doctor_id", auth.user.id)
+      .eq("automation_type", "scheduled_task")
+      .eq("automation_id", params.id);
 
     return NextResponse.json({ success: true });
   } catch {

@@ -22,6 +22,7 @@ export async function GET() {
       .from("chat_sessions")
       .select("*")
       .eq("doctor_id", auth.user.id)
+      .eq("session_type", "chat")
       .order("updated_at", { ascending: false });
 
     if (error) {

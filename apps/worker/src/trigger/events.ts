@@ -1,8 +1,6 @@
 import { task } from "@trigger.dev/sdk/v3";
-import { generateChatResponse } from "@repo/agent";
-import type { AgentContext } from "@repo/agent";
 import { createClient } from "@supabase/supabase-js";
-import { createTriggerApprovalHandler } from "../approval-handler";
+import { dispatchEventItem } from "../dispatch";
 
 function getSupabase() {
   return createClient(
@@ -11,64 +9,32 @@ function getSupabase() {
   );
 }
 
+/**
+ * Thin webhook-style task for a future push source (e.g. Gmail Pub/Sub). It
+ * applies the deterministic filter and forwards matches to Vercel. Not
+ * scheduled — event delivery currently runs through `checkEventTriggers`.
+ */
 export const onNewEmail = task({
   id: "doctor-on-new-email",
-  run: async (payload: { doctorId: string; eventSource: string; eventData?: unknown }) => {
+  run: async (payload: {
+    doctorId: string;
+    eventSource: string;
+    eventData?: unknown;
+    itemId?: string;
+  }) => {
     const supabase = getSupabase();
-    const { doctorId, eventSource, eventData } = payload;
+    const { doctorId, eventSource, eventData, itemId } = payload;
 
-    const { data: triggers, error } = await supabase
-      .from("event_triggers")
-      .select("*")
-      .eq("doctor_id", doctorId)
-      .eq("event_source", eventSource)
-      .eq("enabled", true);
+    if (!itemId) return { status: "skipped", processed: 0 };
 
-    if (error || !triggers || triggers.length === 0) {
-      return {
-        status: "skipped",
-        message: "No matching enabled event triggers",
-      };
-    }
+    const processed = await dispatchEventItem(
+      supabase,
+      doctorId,
+      eventSource,
+      eventData,
+      itemId
+    );
 
-    const results: Array<{ triggerName: string; text: string }> = [];
-
-    for (const trigger of triggers) {
-      try {
-        const row = trigger as {
-          id: string;
-          name: string;
-          instructions: string;
-        };
-
-        const context: AgentContext = {
-          doctorId,
-          sessionType: "event",
-          requestApproval: createTriggerApprovalHandler(doctorId),
-        };
-
-        const message = eventData
-          ? `${row.instructions}\n\nEvent data: ${JSON.stringify(eventData)}`
-          : row.instructions;
-
-        const response = await generateChatResponse({
-          context,
-          messages: [{ role: "user", content: message }],
-        });
-
-        results.push({
-          triggerName: row.name,
-          text: response.text,
-        });
-      } catch (err) {
-        console.error(`[Event] Failed trigger ${trigger.id}:`, err);
-      }
-    }
-
-    return {
-      status: "completed",
-      processed: results.length,
-      results,
-    };
+    return { status: "completed", processed };
   },
 });

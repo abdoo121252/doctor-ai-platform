@@ -122,6 +122,8 @@ export interface Database {
           updated_at: string;
           public_access_token: string | null;
           last_event_id: string | null;
+          session_type: string;
+          source_id: string | null;
         };
         Insert: {
           id?: string;
@@ -131,6 +133,8 @@ export interface Database {
           updated_at?: string;
           public_access_token?: string | null;
           last_event_id?: string | null;
+          session_type?: string;
+          source_id?: string | null;
         };
         Update: {
           id?: string;
@@ -140,6 +144,8 @@ export interface Database {
           updated_at?: string;
           public_access_token?: string | null;
           last_event_id?: string | null;
+          session_type?: string;
+          source_id?: string | null;
         };
       };
       tool_sensitivity_settings: {
@@ -157,6 +163,35 @@ export interface Database {
         };
         Update: {
           doctor_id?: string;
+          tool_name?: string;
+          sensitive?: boolean;
+          updated_at?: string;
+        };
+      };
+      automation_tool_overrides: {
+        Row: {
+          id: string;
+          doctor_id: string;
+          automation_type: string;
+          automation_id: string;
+          tool_name: string;
+          sensitive: boolean;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          doctor_id: string;
+          automation_type: string;
+          automation_id: string;
+          tool_name: string;
+          sensitive: boolean;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          doctor_id?: string;
+          automation_type?: string;
+          automation_id?: string;
           tool_name?: string;
           sensitive?: boolean;
           updated_at?: string;
@@ -208,6 +243,8 @@ export interface Database {
           cron_expression: string;
           instructions: string;
           enabled: boolean;
+          timezone: string;
+          last_run_at: string | null;
           created_at: string;
         };
         Insert: {
@@ -217,6 +254,8 @@ export interface Database {
           cron_expression: string;
           instructions: string;
           enabled?: boolean;
+          timezone?: string;
+          last_run_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -226,6 +265,8 @@ export interface Database {
           cron_expression?: string;
           instructions?: string;
           enabled?: boolean;
+          timezone?: string;
+          last_run_at?: string | null;
           created_at?: string;
         };
       };
@@ -237,6 +278,9 @@ export interface Database {
           event_source: string;
           instructions: string;
           enabled: boolean;
+          filter_rules: Json;
+          last_checked_at: string | null;
+          condition: string | null;
           created_at: string;
         };
         Insert: {
@@ -246,6 +290,9 @@ export interface Database {
           event_source: string;
           instructions: string;
           enabled?: boolean;
+          filter_rules?: Json;
+          last_checked_at?: string | null;
+          condition?: string | null;
           created_at?: string;
         };
         Update: {
@@ -255,6 +302,9 @@ export interface Database {
           event_source?: string;
           instructions?: string;
           enabled?: boolean;
+          filter_rules?: Json;
+          last_checked_at?: string | null;
+          condition?: string | null;
           created_at?: string;
         };
       };

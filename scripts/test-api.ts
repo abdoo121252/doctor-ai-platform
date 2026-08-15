@@ -135,11 +135,14 @@ async function testTasks(authCookie: string) {
       name: `API Test Task ${Date.now()}`,
       cron_expression: "0 8 * * *",
       instructions: "Read today's emails and summarize urgent ones",
+      timezone: "Asia/Riyadh",
     },
   });
   const task = created.json?.task;
   if (created.status === 201 && task?.id) {
     ok(`POST /api/tasks created id=${task.id.slice(0, 8)}`);
+    if (task.timezone === "Asia/Riyadh") ok("POST /api/tasks stores timezone");
+    else bad("POST /api/tasks stores timezone", `got ${task.timezone}`);
   } else {
     bad("POST /api/tasks", `status ${created.status} ${JSON.stringify(created.json).slice(0, 120)}`);
     return;
@@ -175,11 +178,17 @@ async function testEvents(authCookie: string) {
       name: `API Test Trigger ${Date.now()}`,
       event_source: "gmail_new_message",
       instructions: "Summarize the new email",
+      filter_rules: { from: "admissions@univ.edu", subjectContains: "appeal" },
     },
   });
   const event = created.json?.event;
   if (created.status === 201 && event?.id) {
     ok(`POST /api/events created id=${event.id.slice(0, 8)}`);
+    if (event.filter_rules?.from === "admissions@univ.edu" && event.filter_rules?.subjectContains === "appeal") {
+      ok("POST /api/events stores filter_rules");
+    } else {
+      bad("POST /api/events stores filter_rules", JSON.stringify(event.filter_rules));
+    }
   } else {
     bad("POST /api/events", `status ${created.status} ${JSON.stringify(created.json).slice(0, 120)}`);
     return;

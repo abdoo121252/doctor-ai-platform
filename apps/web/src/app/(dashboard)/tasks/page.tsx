@@ -12,7 +12,9 @@ import {
   PowerOff,
   Loader2,
   Clock,
+  SlidersHorizontal,
 } from "lucide-react";
+import { TOOL_DESCRIPTORS } from "@/lib/tool-descriptors";
 
 interface ScheduledTask {
   id: string;
@@ -20,6 +22,7 @@ interface ScheduledTask {
   cron_expression: string;
   instructions: string;
   enabled: boolean;
+  timezone: string;
   created_at: string;
 }
 
@@ -29,7 +32,15 @@ interface EventTrigger {
   event_source: string;
   instructions: string;
   enabled: boolean;
+  filter_rules: Record<string, unknown> | null;
+  condition: string | null;
   created_at: string;
+}
+
+interface OverrideTarget {
+  type: "scheduled_task" | "event_trigger";
+  id: string;
+  name: string;
 }
 
 const CRON_PRESETS = [
@@ -54,6 +65,23 @@ function formatSource(source: string): string {
   return EVENT_SOURCES.find((s) => s.value === source)?.label ?? source;
 }
 
+function formatFilters(rules: Record<string, unknown> | null): string {
+  if (!rules) return "";
+  const labels: Record<string, string> = {
+    from: "From",
+    to: "To",
+    subjectContains: "Contains",
+    bodyContains: "Body contains",
+    hasAttachment: "Has attachment",
+    attendeeContains: "Attendee",
+    folderId: "Folder",
+  };
+  const parts = Object.entries(rules)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `${labels[k] ?? k}: ${v}`);
+  return parts.join(" · ");
+}
+
 export default function TasksPage() {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [events, setEvents] = useState<EventTrigger[]>([]);
@@ -67,7 +95,9 @@ export default function TasksPage() {
   const [eventName, setEventName] = useState("");
   const [eventSource, setEventSource] = useState(EVENT_SOURCES[0]!.value);
   const [eventInst, setEventInst] = useState("");
+  const [eventCondition, setEventCondition] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [overrideTarget, setOverrideTarget] = useState<OverrideTarget | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -125,11 +155,13 @@ export default function TasksPage() {
           name: eventName,
           event_source: eventSource,
           instructions: eventInst,
+          condition: eventCondition.trim() || undefined,
         }),
       });
       if (res.ok) {
         setEventName("");
         setEventInst("");
+        setEventCondition("");
         setShowEventForm(false);
         fetchData();
       }
@@ -176,6 +208,15 @@ export default function TasksPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
+      {overrideTarget && (
+        <OverrideEditor
+          type={overrideTarget.type}
+          automationId={overrideTarget.id}
+          name={overrideTarget.name}
+          onClose={() => setOverrideTarget(null)}
+        />
+      )}
+
       {/* Scheduled Tasks */}
       <section>
         <div className="mb-4 flex items-center justify-between">
@@ -267,12 +308,30 @@ export default function TasksPage() {
                     </div>
                     <p className="truncate text-xs text-muted-foreground">
                       {formatCron(task.cron_expression)}
+                      {task.timezone && task.timezone !== "UTC"
+                        ? ` · ${task.timezone}`
+                        : ""}
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
                       {task.instructions}
                     </p>
                   </div>
                   <div className="ml-3 flex shrink-0 items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      onClick={() =>
+                        setOverrideTarget({
+                          type: "scheduled_task",
+                          id: task.id,
+                          name: task.name,
+                        })
+                      }
+                      title="Approval overrides"
+                    >
+                      <SlidersHorizontal className="h-4 w-4" />
+                    </Button>
                     <Button
                       size="icon"
                       variant="ghost"
@@ -350,6 +409,12 @@ export default function TasksPage() {
                   value={eventInst}
                   onChange={(e) => setEventInst(e.target.value)}
                 />
+                <input
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                  placeholder="Optional natural-language condition (e.g. only if the email is about grading deadlines)"
+                  value={eventCondition}
+                  onChange={(e) => setEventCondition(e.target.value)}
+                />
                 <div className="flex justify-end gap-2">
                   <Button
                     type="button"
@@ -394,11 +459,31 @@ export default function TasksPage() {
                     <p className="text-xs text-muted-foreground">
                       {formatSource(ev.event_source)}
                     </p>
+                    {formatFilters(ev.filter_rules) && (
+                      <p className="truncate text-xs text-muted-foreground">
+                        {formatFilters(ev.filter_rules)}
+                      </p>
+                    )}
                     <p className="truncate text-xs text-muted-foreground">
                       {ev.instructions}
                     </p>
                   </div>
                   <div className="ml-3 flex shrink-0 items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      onClick={() =>
+                        setOverrideTarget({
+                          type: "event_trigger",
+                          id: ev.id,
+                          name: ev.name,
+                        })
+                      }
+                      title="Approval overrides"
+                    >
+                      <SlidersHorizontal className="h-4 w-4" />
+                    </Button>
                     <Button
                       size="icon"
                       variant="ghost"
@@ -428,5 +513,172 @@ export default function TasksPage() {
         )}
       </section>
     </div>
+  );
+}
+
+type OverrideState = "inherit" | "true" | "false";
+
+function OverrideEditor({
+  type,
+  automationId,
+  name,
+  onClose,
+}: {
+  type: "scheduled_task" | "event_trigger";
+  automationId: string;
+  name: string;
+  onClose: () => void;
+}) {
+  const [general, setGeneral] = useState<Record<string, boolean> | null>(null);
+  const [selections, setSelections] = useState<Record<string, OverrideState>>({});
+  const [customize, setCustomize] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/automation/overrides?type=${type}&id=${automationId}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled) {
+            setGeneral(data.general ?? {});
+            const overrides = data.overrides ?? {};
+            const sel: Record<string, OverrideState> = {};
+            for (const k of Object.keys(overrides)) {
+              sel[k] = overrides[k] ? "true" : "false";
+            }
+            setSelections(sel);
+            setCustomize(Object.keys(overrides).length > 0);
+          }
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [type, automationId]);
+
+  async function save() {
+    setSaving(true);
+    try {
+      const overrides: Record<string, boolean> = {};
+      for (const [tool, state] of Object.entries(selections)) {
+        if (state === "true") overrides[tool] = true;
+        else if (state === "false") overrides[tool] = false;
+      }
+      await fetch("/api/automation/overrides", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          automationId,
+          overrides: customize ? overrides : {},
+        }),
+      });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="border-primary/40">
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold">Approval settings</h3>
+            <p className="text-xs text-muted-foreground">
+              {name} — override which tools require your approval for this
+              automation only. Leave &quot;Use general&quot; to follow your
+              global approval settings.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            <div className="mt-4 flex items-center justify-between rounded-md border px-4 py-3">
+              <span className="text-sm">Use general approval settings</span>
+              <button
+                onClick={() => setCustomize((v) => !v)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  customize ? "bg-primary" : "bg-muted"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    customize ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+
+            {customize && (
+              <div className="mt-3 max-h-80 space-y-1.5 overflow-y-auto pr-1">
+                {TOOL_DESCRIPTORS.map((tool) => {
+                  const state = selections[tool.name] ?? "inherit";
+                  const g = general?.[tool.name] ?? false;
+                  return (
+                    <div
+                      key={tool.name}
+                      className="flex items-center justify-between rounded-md border px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium">{tool.label}</p>
+                        {state === "inherit" && (
+                          <p className="text-[10px] text-muted-foreground">
+                            General:{" "}
+                            {g ? "requires approval" : "runs automatically"}
+                          </p>
+                        )}
+                      </div>
+                      <select
+                        className="rounded-md border bg-background px-2 py-1 text-xs"
+                        value={state}
+                        onChange={(e) =>
+                          setSelections((prev) => ({
+                            ...prev,
+                            [tool.name]: e.target.value as OverrideState,
+                          }))
+                        }
+                      >
+                        <option value="inherit">Inherit</option>
+                        <option value="true">Require approval</option>
+                        <option value="false">Run automatically</option>
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={save} disabled={saving}>
+                {saving && (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                )}
+                Save
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

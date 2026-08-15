@@ -72,6 +72,7 @@ export async function middleware(request: NextRequest) {
     "/api/auth/callback",
     "/api/auth/google-callback",
     "/api/auth/microsoft-callback",
+    "/api/automation",
   ];
   const isPublicPath = publicPaths.some((p) =>
     request.nextUrl.pathname.startsWith(p)

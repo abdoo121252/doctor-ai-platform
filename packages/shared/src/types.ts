@@ -50,7 +50,27 @@ export interface ScheduledTask {
   cronExpression: string;
   instructions: string;
   enabled: boolean;
+  timezone: string;
+  lastRunAt: string | null;
   createdAt: string;
+}
+
+/** Detailed filter conditions for an event trigger. */
+export interface EventFilterRules {
+  /** gmail_new_message: sender address (exact) */
+  from?: string;
+  /** gmail_new_message: recipient address (exact) */
+  to?: string;
+  /** gmail_new_message / calendar_event_soon / drive_new_file: substring in subject/title/name */
+  subjectContains?: string;
+  /** gmail_new_message: substring in the email body */
+  bodyContains?: string;
+  /** gmail_new_message: only messages with attachments */
+  hasAttachment?: boolean;
+  /** calendar_event_soon: substring in an attendee email */
+  attendeeContains?: string;
+  /** drive_new_file: only files in this folder id */
+  folderId?: string;
 }
 
 export interface EventTrigger {
@@ -60,5 +80,8 @@ export interface EventTrigger {
   eventSource: "gmail_new_message" | "calendar_event_soon" | "drive_new_file";
   instructions: string;
   enabled: boolean;
+  filterRules: EventFilterRules;
+  lastCheckedAt: string | null;
+  condition: string | null;
   createdAt: string;
 }

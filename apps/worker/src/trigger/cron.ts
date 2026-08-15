@@ -1,8 +1,7 @@
 import { schedules } from "@trigger.dev/sdk/v3";
-import { generateChatResponse } from "@repo/agent";
-import type { AgentContext } from "@repo/agent";
 import { createClient } from "@supabase/supabase-js";
-import { createTriggerApprovalHandler } from "../approval-handler";
+import { cronMatches } from "../cron-match";
+import { forwardToAutomation } from "../dispatch";
 
 function getSupabase() {
   return createClient(
@@ -11,13 +10,41 @@ function getSupabase() {
   );
 }
 
+interface ScheduledTaskRow {
+  id: string;
+  doctor_id: string;
+  name: string;
+  instructions: string;
+  cron_expression: string;
+  timezone: string | null;
+  last_run_at: string | null;
+  enabled: boolean;
+}
+
+/** Window (minutes) to back-walk for the most recent cron match. */
+const LOOKBACK_MINUTES = 16;
+
+/** Most recent minute (ms) within the lookback window where `expr` fires. */
+function lastDueMs(
+  expr: string,
+  timezone: string,
+  now: Date
+): number | null {
+  for (let i = 0; i <= LOOKBACK_MINUTES; i++) {
+    const d = new Date(now.getTime() - i * 60_000);
+    if (cronMatches(expr, d, timezone || "UTC")) return d.getTime();
+  }
+  return null;
+}
+
 export const scheduledAgentSession = schedules.task({
   id: "doctor-scheduled-session",
-  cron: "0 8 * * *",
+  cron: "*/15 * * * *",
+  ttl: "15m",
   run: async () => {
     const supabase = getSupabase();
+    const now = new Date();
 
-    // Load all enabled scheduled tasks across all doctors
     const { data: tasks, error } = await supabase
       .from("scheduled_tasks")
       .select("*")
@@ -28,57 +55,35 @@ export const scheduledAgentSession = schedules.task({
       return { status: "error", message: "Failed to load tasks" };
     }
 
-    if (tasks.length === 0) {
-      return { status: "ok", message: "No enabled scheduled tasks" };
-    }
+    let dispatched = 0;
 
-    const results: Array<{
-      doctorId: string;
-      taskName: string;
-      text: string;
-    }> = [];
+    for (const row of tasks as ScheduledTaskRow[]) {
+      const dueMs = lastDueMs(row.cron_expression, row.timezone || "UTC", now);
+      if (dueMs === null) continue;
 
-    for (const task of tasks) {
-      try {
-        const taskRow = task as {
-          id: string;
-          doctor_id: string;
-          name: string;
-          instructions: string;
-          cron_expression: string;
-          enabled: boolean;
-        };
+      const lastRun = row.last_run_at ? new Date(row.last_run_at).getTime() : null;
+      if (lastRun !== null && lastRun >= dueMs) continue;
 
-        const context: AgentContext = {
-          doctorId: taskRow.doctor_id,
-          sessionType: "cron",
-          requestApproval: createTriggerApprovalHandler(taskRow.doctor_id),
-        };
+      // Optimistically mark as run so we don't re-fire on the next window.
+      await supabase
+        .from("scheduled_tasks")
+        .update({ last_run_at: now.toISOString() })
+        .eq("id", row.id);
 
-        const response = await generateChatResponse({
-          context,
-          messages: [
-            {
-              role: "user",
-              content: taskRow.instructions,
-            },
-          ],
-        });
+      const res = await forwardToAutomation({
+        doctorId: row.doctor_id,
+        sessionType: "cron",
+        taskId: row.id,
+        name: row.name,
+        instructions: row.instructions,
+      });
 
-        results.push({
-          doctorId: taskRow.doctor_id,
-          taskName: taskRow.name,
-          text: response.text,
-        });
-      } catch (err) {
-        console.error(`[Cron] Failed task ${task.id}:`, err);
+      if (res.ok) dispatched++;
+      else {
+        console.error(`[Cron] Forward failed for task ${row.id}:`, res.status);
       }
     }
 
-    return {
-      status: "completed",
-      processed: results.length,
-      results,
-    };
+    return { status: "completed", dispatched };
   },
 });

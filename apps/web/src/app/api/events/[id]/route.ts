@@ -21,6 +21,8 @@ export async function PATCH(
     if (body.event_source !== undefined) updates.event_source = body.event_source;
     if (body.instructions !== undefined) updates.instructions = body.instructions;
     if (body.enabled !== undefined) updates.enabled = body.enabled;
+    if (body.filter_rules !== undefined) updates.filter_rules = body.filter_rules;
+    if (body.condition !== undefined) updates.condition = body.condition;
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 });
@@ -64,6 +66,14 @@ export async function DELETE(
     if (error) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
     }
+
+    // Clean up any per-automation overrides for this trigger.
+    await supabase
+      .from("automation_tool_overrides")
+      .delete()
+      .eq("doctor_id", auth.user.id)
+      .eq("automation_type", "event_trigger")
+      .eq("automation_id", params.id);
 
     return NextResponse.json({ success: true });
   } catch {

@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { name, cron_expression, instructions } = body;
+    const { name, cron_expression, instructions, timezone } = body;
 
     if (!name || !cron_expression || !instructions) {
       return NextResponse.json(
@@ -52,6 +52,7 @@ export async function POST(request: Request) {
         name,
         cron_expression,
         instructions,
+        timezone: timezone ?? "UTC",
         enabled: true,
       })
       .select()

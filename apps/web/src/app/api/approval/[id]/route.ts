@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase-server";
+import { loadChatState } from "@/lib/chat-state";
+import { resumeAutomationTurn } from "@/lib/automation-runner";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +62,30 @@ export async function PATCH(
         { error: "Failed to update approval" },
         { status: 500 }
       );
+    }
+
+    // If this approval belongs to an automation session (cron/event), resume
+    // the paused turn so the approved/rejected tool executes and the agent
+    // continues where it left off.
+    if (approval.session_id) {
+      try {
+        const state = await loadChatState(supabase, approval.session_id);
+        if (
+          state &&
+          state.status === "awaiting_approval" &&
+          state.pending_approval?.approvalId === params.id
+        ) {
+          await resumeAutomationTurn({
+            supabase,
+            doctorId: auth.user.id,
+            sessionId: approval.session_id,
+            approved: status === "approved",
+            revisedInput: body.input,
+          });
+        }
+      } catch (err) {
+        console.error("[Approval] Resume automation failed:", err);
+      }
     }
 
     return NextResponse.json({

@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { name, event_source, instructions } = body;
+    const { name, event_source, instructions, filter_rules, condition } = body;
 
     if (!name || !event_source || !instructions) {
       return NextResponse.json(
@@ -53,6 +53,16 @@ export async function POST(request: Request) {
       );
     }
 
+    if (
+      filter_rules !== undefined &&
+      (typeof filter_rules !== "object" || filter_rules === null || Array.isArray(filter_rules))
+    ) {
+      return NextResponse.json(
+        { error: "filter_rules must be an object" },
+        { status: 400 }
+      );
+    }
+
     const { data, error } = await supabase
       .from("event_triggers")
       .insert({
@@ -60,6 +70,8 @@ export async function POST(request: Request) {
         name,
         event_source,
         instructions,
+        filter_rules: filter_rules ?? {},
+        condition: typeof condition === "string" ? condition : null,
         enabled: true,
       })
       .select()

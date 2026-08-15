@@ -6,6 +6,10 @@ import { createReadCalendarTool, createCreateEventTool } from "./tools/calendar"
 import { createSearchDriveTool } from "./tools/drive";
 import { createReadSheetTool } from "./tools/sheets";
 import {
+  createScheduleTaskTool,
+  createEventTriggerTool,
+} from "./tools/automation";
+import {
   createReadOutlookEmailsTool,
   createSendOutlookEmailTool,
   createReadOutlookCalendarTool,
@@ -98,6 +102,8 @@ export function buildTools(context: AgentContext) {
       context,
       sensitive("readOneDriveFile")
     ),
+    scheduleTask: createScheduleTaskTool(context),
+    createEventTrigger: createEventTriggerTool(context),
   };
 }
 
