@@ -35,6 +35,8 @@ interface ScheduledTask {
   enabled: boolean;
   timezone: string;
   created_at: string;
+  interval_hours: number | null;
+  interval_anchor: string | null;
   dates?: Array<{ run_at: string; fired_at: string | null }>;
 }
 
@@ -68,6 +70,7 @@ const FREQ_OPTIONS = [
   { value: "daily", label: "Daily" },
   { value: "days_of_week", label: "Days of week" },
   { value: "days_of_month", label: "Days of month" },
+  { value: "every_n_hours", label: "Every N hours" },
   { value: "specific_dates", label: "Specific dates" },
 ] as const;
 
@@ -159,6 +162,19 @@ function formatSchedule(task: ScheduledTask): string {
     );
     return dates.length > 0 ? dates.join(" · ") : "One-off (no dates)";
   }
+  if (task.schedule_type === "every_n_hours") {
+    const anchor = task.interval_anchor
+      ? new Date(task.interval_anchor).toLocaleTimeString(undefined, {
+          timeZone: task.timezone || "UTC",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        })
+      : null;
+    return anchor
+      ? `Every ${task.interval_hours} hours from ${anchor}`
+      : `Every ${task.interval_hours} hours`;
+  }
   return parseCron(task.cron_expression ?? "");
 }
 
@@ -194,6 +210,7 @@ export default function TasksPage() {
   const [taskDaysOfMonth, setTaskDaysOfMonth] = useState<number[]>([]);
   const [taskDates, setTaskDates] = useState<Date[]>([]);
   const [taskTime, setTaskTime] = useState("09:00");
+  const [taskIntervalHours, setTaskIntervalHours] = useState(3);
   const [taskTimezone, setTaskTimezone] = useState(detectBrowserTimezone());
   const [taskInst, setTaskInst] = useState("");
   const [eventName, setEventName] = useState("");
@@ -240,29 +257,45 @@ export default function TasksPage() {
     if (taskFreq === "days_of_week" && taskDaysOfWeek.length === 0) return;
     if (taskFreq === "days_of_month" && taskDaysOfMonth.length === 0) return;
     if (taskFreq === "specific_dates" && taskDates.length === 0) return;
+    if (
+      taskFreq === "every_n_hours" &&
+      (!taskIntervalHours || taskIntervalHours < 1 || taskIntervalHours > 23)
+    )
+      return;
     setSubmitting(true);
     try {
-      const body =
-        taskFreq === "specific_dates"
-          ? {
-              name: taskName,
-              instructions: taskInst,
-              schedule_type: "one_off_dates",
-              dates: taskDates.map((d) => format(d, "yyyy-MM-dd")),
-              time: taskTime,
-              timezone: taskTimezone,
-            }
-          : {
-              name: taskName,
-              instructions: taskInst,
-              timezone: taskTimezone,
-              cron_expression:
-                taskFreq === "daily"
-                  ? buildDailyCron(taskTime)
-                  : taskFreq === "days_of_week"
-                    ? buildDaysOfWeekCron(taskTime, taskDaysOfWeek)
-                    : buildDaysOfMonthCron(taskTime, taskDaysOfMonth),
-            };
+      let body: Record<string, unknown>;
+      if (taskFreq === "specific_dates") {
+        body = {
+          name: taskName,
+          instructions: taskInst,
+          schedule_type: "one_off_dates",
+          dates: taskDates.map((d) => format(d, "yyyy-MM-dd")),
+          time: taskTime,
+          timezone: taskTimezone,
+        };
+      } else if (taskFreq === "every_n_hours") {
+        body = {
+          name: taskName,
+          instructions: taskInst,
+          schedule_type: "every_n_hours",
+          interval_hours: taskIntervalHours,
+          time: taskTime,
+          timezone: taskTimezone,
+        };
+      } else {
+        body = {
+          name: taskName,
+          instructions: taskInst,
+          timezone: taskTimezone,
+          cron_expression:
+            taskFreq === "daily"
+              ? buildDailyCron(taskTime)
+              : taskFreq === "days_of_week"
+                ? buildDaysOfWeekCron(taskTime, taskDaysOfWeek)
+                : buildDaysOfMonthCron(taskTime, taskDaysOfMonth),
+        };
+      }
       const res = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -275,6 +308,7 @@ export default function TasksPage() {
         setTaskDaysOfWeek([1]);
         setTaskDaysOfMonth([]);
         setTaskDates([]);
+        setTaskIntervalHours(3);
         setShowTaskForm(false);
         fetchData();
       }
@@ -485,6 +519,29 @@ export default function TasksPage() {
                   </div>
                 )}
 
+                {taskFreq === "every_n_hours" && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Run every N hours
+                    </p>
+                    <input
+                      type="number"
+                      min={1}
+                      max={23}
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      value={taskIntervalHours}
+                      onChange={(e) =>
+                        setTaskIntervalHours(parseInt(e.target.value, 10) || 0)
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Start time is set by the &quot;Time&quot; field below — the
+                      schedule fires at that time, then every{" "}
+                      {taskIntervalHours || "N"} hours.
+                    </p>
+                  </div>
+                )}
+
                 <div className="space-y-1.5">
                   <p className="text-xs font-medium text-muted-foreground">Time</p>
                   <input
@@ -533,7 +590,11 @@ export default function TasksPage() {
                       submitting ||
                       (taskFreq === "days_of_week" && taskDaysOfWeek.length === 0) ||
                       (taskFreq === "days_of_month" && taskDaysOfMonth.length === 0) ||
-                      (taskFreq === "specific_dates" && taskDates.length === 0)
+                      (taskFreq === "specific_dates" && taskDates.length === 0) ||
+                      (taskFreq === "every_n_hours" &&
+                        (!taskIntervalHours ||
+                          taskIntervalHours < 1 ||
+                          taskIntervalHours > 23))
                     }
                   >
                     {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}

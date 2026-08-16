@@ -246,6 +246,8 @@ export interface Database {
           enabled: boolean;
           timezone: string;
           last_run_at: string | null;
+          interval_hours: number | null;
+          interval_anchor: string | null;
           created_at: string;
         };
         Insert: {
@@ -258,6 +260,8 @@ export interface Database {
           enabled?: boolean;
           timezone?: string;
           last_run_at?: string | null;
+          interval_hours?: number | null;
+          interval_anchor?: string | null;
           created_at?: string;
         };
         Update: {
@@ -270,6 +274,8 @@ export interface Database {
           enabled?: boolean;
           timezone?: string;
           last_run_at?: string | null;
+          interval_hours?: number | null;
+          interval_anchor?: string | null;
           created_at?: string;
         };
       };

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase-server";
 import { zonedTimeToUtc } from "@repo/agent";
+import { buildEveryNHoursCron, intervalAnchorUtc } from "@repo/shared";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
       schedule_type,
       dates,
       time,
+      interval_hours,
     } = body;
 
     if (!name || !instructions) {
@@ -78,6 +80,48 @@ export async function POST(request: Request) {
         { error: "name and instructions are required" },
         { status: 400 }
       );
+    }
+
+    if (schedule_type === "every_n_hours") {
+      const intervalHours = Number.isInteger(interval_hours)
+        ? (interval_hours as number)
+        : parseInt(String(interval_hours ?? ""), 10);
+      if (!Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 23) {
+        return NextResponse.json(
+          { error: "interval_hours must be an integer between 1 and 23" },
+          { status: 400 }
+        );
+      }
+
+      const tz = timezone ?? "UTC";
+      const startTime = typeof time === "string" ? time : "09:00";
+      // Enumerated cron when N divides 24, null otherwise (worker computes
+      // the next fire from interval_anchor + interval_hours + last_run_at).
+      const cronExpression = buildEveryNHoursCron(startTime, intervalHours);
+      const anchor = intervalAnchorUtc(startTime, tz).toISOString();
+
+      const { data, error } = await supabase
+        .from("scheduled_tasks")
+        .insert({
+          doctor_id: auth.user.id,
+          name,
+          cron_expression: cronExpression,
+          schedule_type: "every_n_hours",
+          instructions,
+          timezone: tz,
+          enabled: true,
+          interval_hours: intervalHours,
+          interval_anchor: anchor,
+        })
+        .select()
+        .single();
+
+      if (error || !data) {
+        console.error("[Tasks] Create every_n_hours error:", error);
+        return NextResponse.json({ error: "Failed to create task" }, { status: 500 });
+      }
+
+      return NextResponse.json({ task: data }, { status: 201 });
     }
 
     const type = schedule_type === "one_off_dates" ? "one_off_dates" : "recurring";

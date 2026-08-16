@@ -40,6 +40,36 @@ export function buildDailyCron(time?: string): string {
   return `${minute} ${hour} * * *`;
 }
 
+/**
+ * Build the cron for "every N hours starting at `startTime`" (HH:mm).
+ *
+ * Returns a normal enumerated cron (e.g. start 07:00 every 3h ->
+ * "0 1,4,7,10,13,16,19,22 * * *") only when N divides 24. Returns `null`
+ * when N does NOT divide 24 — that case cannot be expressed as a repeating
+ * 5-field cron and must instead be fired from `interval_hours` +
+ * `interval_anchor` + `last_run_at` (see the worker cron).
+ */
+export function buildEveryNHoursCron(
+  startTime: string,
+  intervalHours: number
+): string | null {
+  const { hour, minute } = splitTime(startTime);
+  if (!Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 23) {
+    return null;
+  }
+  if (24 % intervalHours !== 0) return null;
+
+  const count = 24 / intervalHours;
+  const hours: number[] = [];
+  let h = hour % 24;
+  for (let i = 0; i < count; i++) {
+    hours.push(h);
+    h = (h + intervalHours) % 24;
+  }
+  hours.sort((a, b) => a - b);
+  return `${minute} ${hours.join(",")} * * *`;
+}
+
 export function buildDaysOfWeekCron(time?: string, daysOfWeek: number[] = [1]): string {
   const { hour, minute } = splitTime(time);
   const dow = sorted(daysOfWeek).join(",");
@@ -113,6 +143,43 @@ export function zonedTimeToUtc(dateStr: string, time: string, timezone: string):
     parseInt(get("second"), 10)
   );
   return new Date(naive.getTime() - (asUtc - naive.getTime()));
+}
+
+/** Today's date (YYYY-MM-DD) in the given IANA `timezone`. */
+export function dateStringInTimeZone(timezone: string, date = new Date()): string {
+  let dtf: Intl.DateTimeFormat;
+  try {
+    dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  } catch {
+    dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  }
+  const parts = dtf.formatToParts(date);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/**
+ * The grid anchor (UTC) for an "every N hours" schedule: the chosen start
+ * time (HH:mm) on today's date in `timezone`. Fires are computed as
+ * `anchor + k * interval` — the anchor itself may be in the past (the worker
+ * advances to the next slot on/after `now`).
+ */
+export function intervalAnchorUtc(
+  startTime: string,
+  timezone: string,
+  date = new Date()
+): Date {
+  return zonedTimeToUtc(dateStringInTimeZone(timezone, date), startTime, timezone);
 }
 
 const DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

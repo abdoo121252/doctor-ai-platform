@@ -4,6 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 import {
   buildCronFromSchedule,
   buildDaysOfMonthCron,
+  buildEveryNHoursCron,
+  intervalAnchorUtc,
   isValidCron,
   zonedTimeToUtc,
 } from "@repo/shared";
@@ -60,6 +62,18 @@ const scheduleSpec = z.union([
   z.object({
     frequency: z.literal("hourly"),
     time: timeField.describe("Only the minute is used for hourly; the hour is ignored."),
+  }),
+  z.object({
+    frequency: z.literal("every_n_hours"),
+    time: timeField.describe(
+      "Start time (HH:mm) that anchors the N-hour grid; both hour and minute are used."
+    ),
+    intervalHours: z
+      .number()
+      .int()
+      .min(1)
+      .max(23)
+      .describe("Run every N hours (e.g. 3 = every 3 hours)."),
   }),
   z.object({
     cron_expression: z
@@ -137,13 +151,17 @@ export function createScheduleTaskTool(ctx: AgentContext) {
     description:
       "Schedule an automated agent session for the professor. Recurrence types: " +
       "`daily` (a single time), `days_of_week` (multi-select 0=Sunday … 6=Saturday + " +
-      "time), `days_of_month` (multi-select 1-31 + time), `hourly` (minute only), a " +
-      "raw `cron_expression`, or `dates` for one-off (non-recurring) dates. " +
+      "time), `days_of_month` (multi-select 1-31 + time), `hourly` (minute only), " +
+      "`every_n_hours` (start time + intervalHours, e.g. \"every 3 hours from 7am\"), " +
+      "a raw `cron_expression`, or `dates` for one-off (non-recurring) dates. " +
       "IMPORTANT: when the professor gives day numbers (e.g. \"the 13th and 16th\") " +
       "without saying whether they mean every month or just this month, you MUST " +
       "ask them to clarify before calling this tool — never guess, because the two " +
       "meanings are stored completely differently. Use the `dates` field ONLY for " +
-      "explicit one-off dates; use `frequency: days_of_month` for \"every month\".",
+      "explicit one-off dates; use `frequency: days_of_month` for \"every month\"." +
+      "For \"every N hours\" the professor gives an interval (e.g. every 3, 4, 6 " +
+      "hours) and a start time; use `frequency: every_n_hours` with `intervalHours` " +
+      "and `time` set to the start time.",
     inputSchema: z.object({
       name: z.string().describe("Short label for the task"),
       instructions: z
@@ -201,6 +219,44 @@ export function createScheduleTaskTool(ctx: AgentContext) {
           dates: runAtDates,
         });
         return { created: true, task: data, dates: runAtDates };
+      }
+
+      // Every N hours from a start time. Enumerated cron when N divides 24;
+      // otherwise store interval_hours + interval_anchor so the worker fires
+      // from `last_run_at + interval`.
+      if ("frequency" in schedule && schedule.frequency === "every_n_hours") {
+        const startTime = schedule.time ?? "09:00";
+        const cronExpression = buildEveryNHoursCron(startTime, schedule.intervalHours);
+        const anchor = intervalAnchorUtc(startTime, tz).toISOString();
+
+        const { data, error } = await supabase
+          .from("scheduled_tasks")
+          .insert({
+            doctor_id: ctx.doctorId,
+            name,
+            cron_expression: cronExpression,
+            schedule_type: "every_n_hours",
+            instructions,
+            timezone: tz,
+            enabled: true,
+            interval_hours: schedule.intervalHours,
+            interval_anchor: anchor,
+          })
+          .select()
+          .single();
+
+        if (error || !data) {
+          logError("tool:scheduleTask", "Failed to create every-n-hours task", error, ctx.doctorId);
+          throw new Error(error?.message ?? "Failed to create scheduled task");
+        }
+
+        logInfo("tool:scheduleTask", "Every-N-hours task created", ctx.doctorId, {
+          taskId: (data as { id: string }).id,
+          intervalHours: schedule.intervalHours,
+          cron: cronExpression,
+        });
+
+        return { created: true, task: data };
       }
 
       // Recurring (hourly/daily/days_of_week/days_of_month/raw cron).
