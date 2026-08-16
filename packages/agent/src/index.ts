@@ -23,7 +23,7 @@ export {
 
 export { filterMatchesCondition } from "./filter";
 
-export { zonedTimeToUtc } from "./tools/automation";
+export { zonedTimeToUtc } from "@repo/shared";
 
 export { getOAuthUrl, exchangeCodeForTokens } from "./google/auth";
 export {

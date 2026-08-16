@@ -53,3 +53,18 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* react-day-picker theme (used by the scheduling date picker). */
+.rdp-root {
+  --rdp-accent-color: hsl(var(--primary));
+  --rdp-accent-background-color: hsl(var(--primary));
+  --rdp-selected-border: 2px solid hsl(var(--primary));
+}
+.rdp-selected .rdp-day_button {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: inherit;
+}
+.rdp-today:not(.rdp-outside) {
+  color: hsl(var(--primary));
+}

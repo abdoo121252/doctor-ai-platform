@@ -1,6 +1,12 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
+import {
+  buildCronFromSchedule,
+  buildDaysOfMonthCron,
+  isValidCron,
+  zonedTimeToUtc,
+} from "@repo/shared";
 import type { AgentContext } from "../context";
 import { logInfo, logError } from "../logger";
 
@@ -24,33 +30,36 @@ function getSupabase(
   );
 }
 
+const timeField = z
+  .string()
+  .regex(/^\d{2}:\d{2}$/)
+  .optional()
+  .describe('24-hour time, e.g. "09:00". Defaults to 09:00.');
+
 const scheduleSpec = z.union([
   z.object({
-    frequency: z.enum(["hourly", "daily", "weekly"]),
-    time: z
-      .string()
-      .regex(/^\d{2}:\d{2}$/)
-      .optional()
-      .describe("24-hour time, e.g. \"09:00\". Defaults to 09:00."),
-    dayOfWeek: z
-      .number()
-      .int()
-      .min(0)
-      .max(6)
-      .optional()
-      .describe("0=Sunday … 6=Saturday. Defaults to 1 (Monday)."),
+    frequency: z.literal("daily"),
+    time: timeField,
   }),
   z.object({
-    frequency: z.literal("monthly"),
-    time: z
-      .string()
-      .regex(/^\d{2}:\d{2}$/)
-      .optional()
-      .describe("24-hour time, e.g. \"09:00\". Defaults to 09:00."),
+    frequency: z.literal("days_of_week"),
+    time: timeField,
+    daysOfWeek: z
+      .array(z.number().int().min(0).max(6))
+      .min(1)
+      .describe("Days of the week that recur. 0=Sunday … 6=Saturday. Multi-select."),
+  }),
+  z.object({
+    frequency: z.literal("days_of_month"),
+    time: timeField,
     daysOfMonth: z
       .array(z.number().int().min(1).max(31))
       .min(1)
-      .describe("Days of the month that recur, e.g. [13, 16, 18]."),
+      .describe("Days of the month that recur, e.g. [1, 15, 28]."),
+  }),
+  z.object({
+    frequency: z.literal("hourly"),
+    time: timeField.describe("Only the minute is used for hourly; the hour is ignored."),
   }),
   z.object({
     cron_expression: z
@@ -65,11 +74,7 @@ const scheduleSpec = z.union([
         "One-off (non-recurring) dates as YYYY-MM-DD. Use ONLY when the " +
           "professor explicitly means these exact dates and not a monthly recurrence."
       ),
-    time: z
-      .string()
-      .regex(/^\d{2}:\d{2}$/)
-      .optional()
-      .describe("24-hour time, e.g. \"09:00\". Defaults to 09:00."),
+    time: timeField,
   }),
 ]);
 
@@ -107,98 +112,38 @@ const filterRulesSchema = z.object({
 });
 
 /**
- * Build a 5-field cron string from a friendly schedule spec. Falls back to
- * a daily 09:00 schedule when time/day are omitted.
+ * Build a 5-field cron string from a structured schedule spec.
  */
 export function buildCronFromSpec(
-  frequency: "hourly" | "daily" | "weekly",
+  frequency: "hourly" | "daily" | "days_of_week" | "days_of_month",
   time?: string,
-  dayOfWeek?: number
+  days?: number[]
 ): string {
-  const [hour, minute] = (time ?? "09:00").split(":").map((n) => parseInt(n, 10));
-  const h = Number.isFinite(hour) ? hour : 9;
-  const m = Number.isFinite(minute) ? minute : 0;
-
-  if (frequency === "hourly") return `${m} * * * *`;
-  if (frequency === "weekly") {
-    const d = dayOfWeek ?? 1;
-    return `${m} ${h} * * ${d}`;
-  }
-  return `${m} ${h} * * *`;
+  return buildCronFromSchedule({
+    frequency,
+    time,
+    daysOfWeek: frequency === "days_of_week" ? days : undefined,
+    daysOfMonth: frequency === "days_of_month" ? days : undefined,
+  });
 }
 
-/**
- * Build a monthly recurring cron, e.g. daysOfMonth [13,16,18] at 09:00 →
- * "0 9 13,16,18 * *".
- */
+/** Alias kept for callers using the old "monthly days" name. */
 export function buildMonthlyCron(time: string | undefined, daysOfMonth: number[]): string {
-  const [hour, minute] = (time ?? "09:00").split(":").map((n) => parseInt(n, 10));
-  const h = Number.isFinite(hour) ? hour : 9;
-  const m = Number.isFinite(minute) ? minute : 0;
-  const dom = daysOfMonth
-    .slice()
-    .sort((a, b) => a - b)
-    .join(",");
-  return `${m} ${h} ${dom} * *`;
-}
-
-/**
- * Convert a wall-clock `YYYY-MM-DD` + `HH:mm` in `timezone` (IANA) to a UTC
- * Date, honoring DST. Uses the Intl offset trick so no tz library is needed.
- */
-export function zonedTimeToUtc(dateStr: string, time: string, timezone: string): Date {
-  const tz = timezone || "UTC";
-  const naive = new Date(`${dateStr}T${time}:00Z`);
-
-  let dtf: Intl.DateTimeFormat;
-  try {
-    dtf = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23",
-    });
-  } catch {
-    return naive;
-  }
-
-  const parts = dtf.formatToParts(naive);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  const asUtc = Date.UTC(
-    parseInt(get("year"), 10),
-    parseInt(get("month"), 10) - 1,
-    parseInt(get("day"), 10),
-    parseInt(get("hour"), 10),
-    parseInt(get("minute"), 10),
-    parseInt(get("second"), 10)
-  );
-  return new Date(naive.getTime() - (asUtc - naive.getTime()));
-}
-
-const CRON_FIELD = "(\\d{1,2}|\\*(/\\d{1,2})?|[\\d,*-]+)";
-const CRON_RE = new RegExp(
-  `^\\s*${CRON_FIELD}\\s+${CRON_FIELD}\\s+${CRON_FIELD}\\s+${CRON_FIELD}\\s+${CRON_FIELD}\\s*$`
-);
-
-export function isValidCron(expr: string): boolean {
-  return CRON_RE.test(expr);
+  return buildDaysOfMonthCron(time, daysOfMonth);
 }
 
 export function createScheduleTaskTool(ctx: AgentContext) {
   return tool({
     description:
-      "Schedule an automated agent session for the professor. Supports daily " +
-      "at a fixed time, weekly on a specific day, monthly on specific days of " +
-      "the month, and one-off (non-recurring) dates. " +
+      "Schedule an automated agent session for the professor. Recurrence types: " +
+      "`daily` (a single time), `days_of_week` (multi-select 0=Sunday … 6=Saturday + " +
+      "time), `days_of_month` (multi-select 1-31 + time), `hourly` (minute only), a " +
+      "raw `cron_expression`, or `dates` for one-off (non-recurring) dates. " +
       "IMPORTANT: when the professor gives day numbers (e.g. \"the 13th and 16th\") " +
       "without saying whether they mean every month or just this month, you MUST " +
       "ask them to clarify before calling this tool — never guess, because the two " +
       "meanings are stored completely differently. Use the `dates` field ONLY for " +
-      "explicit one-off dates; use `frequency: monthly` for \"every month\".",
+      "explicit one-off dates; use `frequency: days_of_month` for \"every month\".",
     inputSchema: z.object({
       name: z.string().describe("Short label for the task"),
       instructions: z
@@ -258,17 +203,16 @@ export function createScheduleTaskTool(ctx: AgentContext) {
         return { created: true, task: data, dates: runAtDates };
       }
 
-      // Recurring (hourly/daily/weekly/monthly/raw cron).
+      // Recurring (hourly/daily/days_of_week/days_of_month/raw cron).
       const cronExpression =
         "cron_expression" in schedule
           ? schedule.cron_expression
-          : schedule.frequency === "monthly"
-            ? buildMonthlyCron(schedule.time, schedule.daysOfMonth)
-            : buildCronFromSpec(
-                schedule.frequency,
-                schedule.time,
-                schedule.dayOfWeek
-              );
+          : buildCronFromSchedule({
+              frequency: schedule.frequency,
+              time: "time" in schedule ? schedule.time : undefined,
+              daysOfWeek: "daysOfWeek" in schedule ? schedule.daysOfWeek : undefined,
+              daysOfMonth: "daysOfMonth" in schedule ? schedule.daysOfMonth : undefined,
+            });
 
       if (!isValidCron(cronExpression)) {
         throw new Error(`Invalid cron expression: "${cronExpression}"`);

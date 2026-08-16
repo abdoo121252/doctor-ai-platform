@@ -15,6 +15,15 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { TOOL_DESCRIPTORS } from "@/lib/tool-descriptors";
+import { DayPicker } from "react-day-picker";
+import "react-day-picker/style.css";
+import { format } from "date-fns";
+import {
+  buildDailyCron,
+  buildDaysOfWeekCron,
+  buildDaysOfMonthCron,
+  parseCron,
+} from "@repo/shared";
 
 interface ScheduledTask {
   id: string;
@@ -45,14 +54,6 @@ interface OverrideTarget {
   name: string;
 }
 
-const CRON_PRESETS = [
-  { label: "Every morning (8 AM)", value: "0 8 * * *" },
-  { label: "Every evening (6 PM)", value: "0 18 * * *" },
-  { label: "Every hour", value: "0 * * * *" },
-  { label: "Every Monday 9 AM", value: "0 9 * * 1" },
-  { label: "Daily noon", value: "0 12 * * *" },
-];
-
 const EVENT_SOURCES = [
   { value: "gmail_new_message", label: "New Gmail Message" },
   { value: "calendar_event_soon", label: "Calendar Event Starting Soon" },
@@ -62,9 +63,24 @@ const EVENT_SOURCES = [
   { value: "onedrive_new_file", label: "New File in OneDrive" },
 ];
 
-function formatCron(cron: string): string {
-  return CRON_PRESETS.find((p) => p.value === cron)?.label ?? cron;
-}
+const FREQ_OPTIONS = [
+  { value: "daily", label: "Daily" },
+  { value: "days_of_week", label: "Days of week" },
+  { value: "days_of_month", label: "Days of month" },
+  { value: "specific_dates", label: "Specific dates" },
+] as const;
+
+type TaskFreq = (typeof FREQ_OPTIONS)[number]["value"];
+
+const DOW_OPTIONS = [
+  { value: 0, label: "Sun" },
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+];
 
 function formatSource(source: string): string {
   return EVENT_SOURCES.find((s) => s.value === source)?.label ?? source;
@@ -96,7 +112,7 @@ function formatSchedule(task: ScheduledTask): string {
     );
     return dates.length > 0 ? dates.join(" · ") : "One-off (no dates)";
   }
-  return formatCron(task.cron_expression ?? "");
+  return parseCron(task.cron_expression ?? "");
 }
 
 interface FilterField {
@@ -126,9 +142,10 @@ export default function TasksPage() {
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [showEventForm, setShowEventForm] = useState(false);
   const [taskName, setTaskName] = useState("");
-  const [taskCron, setTaskCron] = useState(CRON_PRESETS[0]!.value);
-  const [taskScheduleType, setTaskScheduleType] = useState<"recurring" | "one_off_dates">("recurring");
-  const [taskDates, setTaskDates] = useState("");
+  const [taskFreq, setTaskFreq] = useState<TaskFreq>("daily");
+  const [taskDaysOfWeek, setTaskDaysOfWeek] = useState<number[]>([1]);
+  const [taskDaysOfMonth, setTaskDaysOfMonth] = useState<number[]>([]);
+  const [taskDates, setTaskDates] = useState<Date[]>([]);
   const [taskTime, setTaskTime] = useState("09:00");
   const [taskInst, setTaskInst] = useState("");
   const [eventName, setEventName] = useState("");
@@ -158,30 +175,44 @@ export default function TasksPage() {
     fetchData();
   }, [fetchData]);
 
+  const toggleDow = (d: number) =>
+    setTaskDaysOfWeek((prev) =>
+      prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]
+    );
+
+  const toggleDom = (d: number) =>
+    setTaskDaysOfMonth((prev) =>
+      prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]
+    );
+
   const createTask = async (e: FormEvent) => {
     e.preventDefault();
     if (!taskName || !taskInst) return;
+    if (taskFreq === "days_of_week" && taskDaysOfWeek.length === 0) return;
+    if (taskFreq === "days_of_month" && taskDaysOfMonth.length === 0) return;
+    if (taskFreq === "specific_dates" && taskDates.length === 0) return;
     setSubmitting(true);
     try {
-      const isOneOff = taskScheduleType === "one_off_dates";
-      const dates = taskDates
-        .split(",")
-        .map((d) => d.trim())
-        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
-      const body = isOneOff
-        ? {
-            name: taskName,
-            instructions: taskInst,
-            schedule_type: "one_off_dates",
-            dates,
-            time: taskTime,
-            timezone: "UTC",
-          }
-        : {
-            name: taskName,
-            instructions: taskInst,
-            cron_expression: taskCron,
-          };
+      const body =
+        taskFreq === "specific_dates"
+          ? {
+              name: taskName,
+              instructions: taskInst,
+              schedule_type: "one_off_dates",
+              dates: taskDates.map((d) => format(d, "yyyy-MM-dd")),
+              time: taskTime,
+              timezone: "UTC",
+            }
+          : {
+              name: taskName,
+              instructions: taskInst,
+              cron_expression:
+                taskFreq === "daily"
+                  ? buildDailyCron(taskTime)
+                  : taskFreq === "days_of_week"
+                    ? buildDaysOfWeekCron(taskTime, taskDaysOfWeek)
+                    : buildDaysOfMonthCron(taskTime, taskDaysOfMonth),
+            };
       const res = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -190,7 +221,10 @@ export default function TasksPage() {
       if (res.ok) {
         setTaskName("");
         setTaskInst("");
-        setTaskDates("");
+        setTaskFreq("daily");
+        setTaskDaysOfWeek([1]);
+        setTaskDaysOfMonth([]);
+        setTaskDates([]);
         setShowTaskForm(false);
         fetchData();
       }
@@ -312,46 +346,95 @@ export default function TasksPage() {
                   value={taskName}
                   onChange={(e) => setTaskName(e.target.value)}
                 />
-                <select
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  value={taskScheduleType}
-                  onChange={(e) =>
-                    setTaskScheduleType(
-                      e.target.value as "recurring" | "one_off_dates"
-                    )
-                  }
-                >
-                  <option value="recurring">Recurring schedule</option>
-                  <option value="one_off_dates">Specific dates (one-off)</option>
-                </select>
-                {taskScheduleType === "recurring" ? (
-                  <select
-                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                    value={taskCron}
-                    onChange={(e) => setTaskCron(e.target.value)}
-                  >
-                    {CRON_PRESETS.map((p) => (
-                      <option key={p.value} value={p.value}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="space-y-2">
-                    <input
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                      placeholder="Dates (YYYY-MM-DD, comma-separated)"
-                      value={taskDates}
-                      onChange={(e) => setTaskDates(e.target.value)}
-                    />
-                    <input
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                      placeholder="Time (HH:mm)"
-                      value={taskTime}
-                      onChange={(e) => setTaskTime(e.target.value)}
-                    />
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {FREQ_OPTIONS.map((opt) => (
+                    <Button
+                      key={opt.value}
+                      type="button"
+                      size="sm"
+                      variant={taskFreq === opt.value ? "default" : "outline"}
+                      onClick={() => setTaskFreq(opt.value)}
+                    >
+                      {opt.label}
+                    </Button>
+                  ))}
+                </div>
+
+                {taskFreq === "days_of_week" && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Days of the week
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {DOW_OPTIONS.map((d) => (
+                        <Button
+                          key={d.value}
+                          type="button"
+                          size="sm"
+                          variant={
+                            taskDaysOfWeek.includes(d.value) ? "default" : "outline"
+                          }
+                          onClick={() => toggleDow(d.value)}
+                        >
+                          {d.label}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
                 )}
+
+                {taskFreq === "days_of_month" && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Days of the month
+                    </p>
+                    <div className="grid grid-cols-7 gap-1.5">
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                        <Button
+                          key={day}
+                          type="button"
+                          size="sm"
+                          variant={
+                            taskDaysOfMonth.includes(day) ? "default" : "outline"
+                          }
+                          onClick={() => toggleDom(day)}
+                          className="px-0"
+                        >
+                          {day}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {taskFreq === "specific_dates" && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Pick specific dates
+                    </p>
+                    <DayPicker
+                      mode="multiple"
+                      selected={taskDates}
+                      onSelect={(dates) => setTaskDates(dates ?? [])}
+                    />
+                    {taskDates.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {taskDates.length} date
+                        {taskDates.length === 1 ? "" : "s"} selected
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">Time</p>
+                  <input
+                    type="time"
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    value={taskTime}
+                    onChange={(e) => setTaskTime(e.target.value)}
+                  />
+                </div>
                 <textarea
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                   rows={3}
@@ -368,7 +451,16 @@ export default function TasksPage() {
                   >
                     Cancel
                   </Button>
-                  <Button type="submit" size="sm" disabled={submitting}>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={
+                      submitting ||
+                      (taskFreq === "days_of_week" && taskDaysOfWeek.length === 0) ||
+                      (taskFreq === "days_of_month" && taskDaysOfMonth.length === 0) ||
+                      (taskFreq === "specific_dates" && taskDates.length === 0)
+                    }
+                  >
                     {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                     Create
                   </Button>
