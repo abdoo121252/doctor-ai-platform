@@ -148,6 +148,7 @@ The agent never runs on Trigger.dev. Trigger.dev only schedules (15-min cron DB-
 | Tasks dashboard | `apps/web/src/app/(dashboard)/tasks/page.tsx` |
 | Tasks list API (GET/POST) | `apps/web/src/app/api/tasks/route.ts` |
 | Task update API (PATCH/DELETE) | `apps/web/src/app/api/tasks/[id]/route.ts` |
+| Task run-now API (POST — manual trigger, no cron wait) | `apps/web/src/app/api/tasks/[id]/run/route.ts` |
 | Events list API (GET/POST) | `apps/web/src/app/api/events/route.ts` |
 | Event update API (PATCH/DELETE) | `apps/web/src/app/api/events/[id]/route.ts` |
 | Google OAuth + token mgmt | `packages/agent/src/google/auth.ts` (`getGoogleAuth(doctorId, supabaseClient?)` — accepts optional client, falls back to service key) |

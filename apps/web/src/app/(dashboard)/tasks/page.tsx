@@ -13,6 +13,7 @@ import {
   Loader2,
   Clock,
   SlidersHorizontal,
+  Play,
 } from "lucide-react";
 import { TOOL_DESCRIPTORS } from "@/lib/tool-descriptors";
 import { DayPicker } from "react-day-picker";
@@ -82,6 +83,50 @@ const DOW_OPTIONS = [
   { value: 6, label: "Sat" },
 ];
 
+const COMMON_TIMEZONES = [
+  "UTC",
+  "Africa/Cairo",
+  "Africa/Casablanca",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/New_York",
+  "America/Toronto",
+  "Asia/Beirut",
+  "Asia/Dubai",
+  "Asia/Jerusalem",
+  "Asia/Kolkata",
+  "Asia/Riyadh",
+  "Asia/Shanghai",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+  "Europe/Berlin",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Moscow",
+];
+
+function detectBrowserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+function getTimezoneOptions(): string[] {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const supported = (Intl as any).supportedValuesOf?.("timeZone") as
+      | string[]
+      | undefined;
+    if (supported && supported.length > 0) return supported;
+  } catch {
+    /* ignore */
+  }
+  return COMMON_TIMEZONES;
+}
+
 function formatSource(source: string): string {
   return EVENT_SOURCES.find((s) => s.value === source)?.label ?? source;
 }
@@ -108,7 +153,9 @@ function formatFilters(rules: Record<string, unknown> | null): string {
 function formatSchedule(task: ScheduledTask): string {
   if (task.schedule_type === "one_off_dates") {
     const dates = (task.dates ?? []).map((d) =>
-      new Date(d.run_at).toLocaleString()
+      new Date(d.run_at).toLocaleString(undefined, {
+        timeZone: task.timezone || "UTC",
+      })
     );
     return dates.length > 0 ? dates.join(" · ") : "One-off (no dates)";
   }
@@ -147,6 +194,7 @@ export default function TasksPage() {
   const [taskDaysOfMonth, setTaskDaysOfMonth] = useState<number[]>([]);
   const [taskDates, setTaskDates] = useState<Date[]>([]);
   const [taskTime, setTaskTime] = useState("09:00");
+  const [taskTimezone, setTaskTimezone] = useState(detectBrowserTimezone());
   const [taskInst, setTaskInst] = useState("");
   const [eventName, setEventName] = useState("");
   const [eventSource, setEventSource] = useState(EVENT_SOURCES[0]!.value);
@@ -155,6 +203,7 @@ export default function TasksPage() {
   const [eventFilters, setEventFilters] = useState<Record<string, string | boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [overrideTarget, setOverrideTarget] = useState<OverrideTarget | null>(null);
+  const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -201,11 +250,12 @@ export default function TasksPage() {
               schedule_type: "one_off_dates",
               dates: taskDates.map((d) => format(d, "yyyy-MM-dd")),
               time: taskTime,
-              timezone: "UTC",
+              timezone: taskTimezone,
             }
           : {
               name: taskName,
               instructions: taskInst,
+              timezone: taskTimezone,
               cron_expression:
                 taskFreq === "daily"
                   ? buildDailyCron(taskTime)
@@ -281,6 +331,15 @@ export default function TasksPage() {
   const deleteTask = async (id: string) => {
     await fetch(`/api/tasks/${id}`, { method: "DELETE" });
     fetchData();
+  };
+
+  const runTask = async (task: ScheduledTask) => {
+    setRunningTaskId(task.id);
+    try {
+      await fetch(`/api/tasks/${task.id}/run`, { method: "POST" });
+    } finally {
+      setRunningTaskId(null);
+    }
   };
 
   const toggleEvent = async (ev: EventTrigger) => {
@@ -435,6 +494,22 @@ export default function TasksPage() {
                     onChange={(e) => setTaskTime(e.target.value)}
                   />
                 </div>
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Timezone
+                  </p>
+                  <select
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    value={taskTimezone}
+                    onChange={(e) => setTaskTimezone(e.target.value)}
+                  >
+                    {getTimezoneOptions().map((tz) => (
+                      <option key={tz} value={tz}>
+                        {tz}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <textarea
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                   rows={3}
@@ -494,9 +569,7 @@ export default function TasksPage() {
                     </div>
                     <p className="truncate text-xs text-muted-foreground">
                       {formatSchedule(task)}
-                      {task.schedule_type !== "one_off_dates" &&
-                      task.timezone &&
-                      task.timezone !== "UTC"
+                      {task.timezone && task.timezone !== "UTC"
                         ? ` · ${task.timezone}`
                         : ""}
                     </p>
@@ -505,6 +578,20 @@ export default function TasksPage() {
                     </p>
                   </div>
                   <div className="ml-3 flex shrink-0 items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      onClick={() => runTask(task)}
+                      disabled={runningTaskId === task.id}
+                      title="Run now"
+                    >
+                      {runningTaskId === task.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                    </Button>
                     <Button
                       size="icon"
                       variant="ghost"

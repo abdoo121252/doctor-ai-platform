@@ -74,12 +74,6 @@ export const scheduledAgentSession = schedules.task({
       const lastRun = row.last_run_at ? new Date(row.last_run_at).getTime() : null;
       if (lastRun !== null && lastRun >= dueMs) continue;
 
-      // Optimistically mark as run so we don't re-fire on the next window.
-      await supabase
-        .from("scheduled_tasks")
-        .update({ last_run_at: now.toISOString() })
-        .eq("id", row.id);
-
       const res = await forwardToAutomation({
         doctorId: row.doctor_id,
         sessionType: "cron",
@@ -88,8 +82,15 @@ export const scheduledAgentSession = schedules.task({
         instructions: row.instructions,
       });
 
-      if (res.ok) dispatched++;
-      else {
+      if (res.ok) {
+        // Mark only after a successful forward; use the due time so the
+        // next window's `lastRun >= dueMs` guard still suppresses re-fires.
+        await supabase
+          .from("scheduled_tasks")
+          .update({ last_run_at: new Date(dueMs).toISOString() })
+          .eq("id", row.id);
+        dispatched++;
+      } else {
         console.error(`[Cron] Forward failed for task ${row.id}:`, res.status);
       }
     }
@@ -106,11 +107,6 @@ export const scheduledAgentSession = schedules.task({
       if (dateErr || !dates || dates.length === 0) continue;
 
       for (const d of dates as Array<{ id: string; run_at: string }>) {
-        await supabase
-          .from("scheduled_task_dates")
-          .update({ fired_at: new Date().toISOString() })
-          .eq("id", d.id);
-
         const res = await forwardToAutomation({
           doctorId: row.doctor_id,
           sessionType: "cron",
@@ -119,8 +115,13 @@ export const scheduledAgentSession = schedules.task({
           instructions: row.instructions,
         });
 
-        if (res.ok) dispatched++;
-        else {
+        if (res.ok) {
+          await supabase
+            .from("scheduled_task_dates")
+            .update({ fired_at: new Date().toISOString() })
+            .eq("id", d.id);
+          dispatched++;
+        } else {
           console.error(`[Cron] Forward failed for one-off task ${row.id}:`, res.status);
         }
       }
