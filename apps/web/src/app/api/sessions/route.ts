@@ -22,7 +22,6 @@ export async function GET() {
       .from("chat_sessions")
       .select("*")
       .eq("doctor_id", auth.user.id)
-      .eq("session_type", "chat")
       .order("updated_at", { ascending: false });
 
     if (error) {
@@ -64,6 +63,7 @@ export async function GET() {
         sessions.map((s) => ({
           id: s.id,
           title: s.title,
+          sessionType: s.session_type,
           createdAt: s.created_at,
           updatedAt: s.updated_at,
           lastMessage: lastBySession[s.id] ?? undefined,

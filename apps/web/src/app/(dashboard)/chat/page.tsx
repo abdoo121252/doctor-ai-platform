@@ -20,6 +20,7 @@ import { Card } from "@/components/ui/card";
 interface Session {
   id: string;
   title: string;
+  sessionType?: string;
   createdAt: string;
   updatedAt: string;
   lastMessage?: string;
@@ -259,8 +260,13 @@ export default function ChatPage() {
                     </div>
                   ) : (
                     <>
-                      <p className="text-xs font-medium truncate">
-                        {session.title}
+                      <p className="flex items-center gap-1 text-xs font-medium">
+                        <span className="truncate">{session.title}</span>
+                        {session.sessionType && session.sessionType !== "chat" && (
+                          <span className="shrink-0 rounded bg-primary/10 px-1 py-px text-[9px] font-semibold uppercase text-primary">
+                            {session.sessionType === "cron" ? "Task" : "Trigger"}
+                          </span>
+                        )}
                       </p>
                       <p className="text-[10px] text-muted-foreground">
                         {formatTime(session.updatedAt)}
