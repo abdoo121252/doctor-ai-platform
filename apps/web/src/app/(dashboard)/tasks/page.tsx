@@ -19,11 +19,13 @@ import { TOOL_DESCRIPTORS } from "@/lib/tool-descriptors";
 interface ScheduledTask {
   id: string;
   name: string;
-  cron_expression: string;
+  cron_expression: string | null;
+  schedule_type: string;
   instructions: string;
   enabled: boolean;
   timezone: string;
   created_at: string;
+  dates?: Array<{ run_at: string; fired_at: string | null }>;
 }
 
 interface EventTrigger {
@@ -55,6 +57,9 @@ const EVENT_SOURCES = [
   { value: "gmail_new_message", label: "New Gmail Message" },
   { value: "calendar_event_soon", label: "Calendar Event Starting Soon" },
   { value: "drive_new_file", label: "New File in Drive" },
+  { value: "outlook_new_message", label: "New Outlook Message" },
+  { value: "outlook_calendar_soon", label: "Outlook Event Starting Soon" },
+  { value: "onedrive_new_file", label: "New File in OneDrive" },
 ];
 
 function formatCron(cron: string): string {
@@ -74,13 +79,44 @@ function formatFilters(rules: Record<string, unknown> | null): string {
     bodyContains: "Body contains",
     hasAttachment: "Has attachment",
     attendeeContains: "Attendee",
+    locationContains: "Location",
     folderId: "Folder",
+    mimeType: "Type",
   };
   const parts = Object.entries(rules)
     .filter(([, v]) => v !== undefined && v !== null && v !== "")
     .map(([k, v]) => `${labels[k] ?? k}: ${v}`);
   return parts.join(" · ");
 }
+
+function formatSchedule(task: ScheduledTask): string {
+  if (task.schedule_type === "one_off_dates") {
+    const dates = (task.dates ?? []).map((d) =>
+      new Date(d.run_at).toLocaleString()
+    );
+    return dates.length > 0 ? dates.join(" · ") : "One-off (no dates)";
+  }
+  return formatCron(task.cron_expression ?? "");
+}
+
+interface FilterField {
+  key: string;
+  label: string;
+  type: "text" | "boolean";
+  sources: string[];
+}
+
+const FILTER_FIELDS: FilterField[] = [
+  { key: "from", label: "From (contains)", type: "text", sources: ["gmail_new_message", "outlook_new_message"] },
+  { key: "to", label: "To (contains)", type: "text", sources: ["gmail_new_message", "outlook_new_message"] },
+  { key: "subjectContains", label: "Subject contains", type: "text", sources: ["gmail_new_message", "outlook_new_message", "calendar_event_soon", "outlook_calendar_soon", "drive_new_file", "onedrive_new_file"] },
+  { key: "bodyContains", label: "Body contains", type: "text", sources: ["gmail_new_message", "outlook_new_message"] },
+  { key: "hasAttachment", label: "Has attachment", type: "boolean", sources: ["gmail_new_message", "outlook_new_message"] },
+  { key: "attendeeContains", label: "Attendee contains", type: "text", sources: ["calendar_event_soon", "outlook_calendar_soon"] },
+  { key: "locationContains", label: "Location contains", type: "text", sources: ["calendar_event_soon", "outlook_calendar_soon"] },
+  { key: "folderId", label: "Folder ID", type: "text", sources: ["drive_new_file", "onedrive_new_file"] },
+  { key: "mimeType", label: "MIME type", type: "text", sources: ["drive_new_file", "onedrive_new_file"] },
+];
 
 export default function TasksPage() {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
@@ -91,11 +127,15 @@ export default function TasksPage() {
   const [showEventForm, setShowEventForm] = useState(false);
   const [taskName, setTaskName] = useState("");
   const [taskCron, setTaskCron] = useState(CRON_PRESETS[0]!.value);
+  const [taskScheduleType, setTaskScheduleType] = useState<"recurring" | "one_off_dates">("recurring");
+  const [taskDates, setTaskDates] = useState("");
+  const [taskTime, setTaskTime] = useState("09:00");
   const [taskInst, setTaskInst] = useState("");
   const [eventName, setEventName] = useState("");
   const [eventSource, setEventSource] = useState(EVENT_SOURCES[0]!.value);
   const [eventInst, setEventInst] = useState("");
   const [eventCondition, setEventCondition] = useState("");
+  const [eventFilters, setEventFilters] = useState<Record<string, string | boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [overrideTarget, setOverrideTarget] = useState<OverrideTarget | null>(null);
 
@@ -123,18 +163,34 @@ export default function TasksPage() {
     if (!taskName || !taskInst) return;
     setSubmitting(true);
     try {
+      const isOneOff = taskScheduleType === "one_off_dates";
+      const dates = taskDates
+        .split(",")
+        .map((d) => d.trim())
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+      const body = isOneOff
+        ? {
+            name: taskName,
+            instructions: taskInst,
+            schedule_type: "one_off_dates",
+            dates,
+            time: taskTime,
+            timezone: "UTC",
+          }
+        : {
+            name: taskName,
+            instructions: taskInst,
+            cron_expression: taskCron,
+          };
       const res = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: taskName,
-          cron_expression: taskCron,
-          instructions: taskInst,
-        }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
         setTaskName("");
         setTaskInst("");
+        setTaskDates("");
         setShowTaskForm(false);
         fetchData();
       }
@@ -148,6 +204,13 @@ export default function TasksPage() {
     if (!eventName || !eventInst) return;
     setSubmitting(true);
     try {
+      const filter_rules: Record<string, unknown> = {};
+      for (const f of FILTER_FIELDS) {
+        if (!f.sources.includes(eventSource)) continue;
+        const v = eventFilters[f.key];
+        if (v === undefined || v === null || v === "" || v === false) continue;
+        filter_rules[f.key] = v;
+      }
       const res = await fetch("/api/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -156,12 +219,14 @@ export default function TasksPage() {
           event_source: eventSource,
           instructions: eventInst,
           condition: eventCondition.trim() || undefined,
+          filter_rules,
         }),
       });
       if (res.ok) {
         setEventName("");
         setEventInst("");
         setEventCondition("");
+        setEventFilters({});
         setShowEventForm(false);
         fetchData();
       }
@@ -249,15 +314,44 @@ export default function TasksPage() {
                 />
                 <select
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  value={taskCron}
-                  onChange={(e) => setTaskCron(e.target.value)}
+                  value={taskScheduleType}
+                  onChange={(e) =>
+                    setTaskScheduleType(
+                      e.target.value as "recurring" | "one_off_dates"
+                    )
+                  }
                 >
-                  {CRON_PRESETS.map((p) => (
-                    <option key={p.value} value={p.value}>
-                      {p.label}
-                    </option>
-                  ))}
+                  <option value="recurring">Recurring schedule</option>
+                  <option value="one_off_dates">Specific dates (one-off)</option>
                 </select>
+                {taskScheduleType === "recurring" ? (
+                  <select
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    value={taskCron}
+                    onChange={(e) => setTaskCron(e.target.value)}
+                  >
+                    {CRON_PRESETS.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      placeholder="Dates (YYYY-MM-DD, comma-separated)"
+                      value={taskDates}
+                      onChange={(e) => setTaskDates(e.target.value)}
+                    />
+                    <input
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      placeholder="Time (HH:mm)"
+                      value={taskTime}
+                      onChange={(e) => setTaskTime(e.target.value)}
+                    />
+                  </div>
+                )}
                 <textarea
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                   rows={3}
@@ -307,8 +401,10 @@ export default function TasksPage() {
                       )}
                     </div>
                     <p className="truncate text-xs text-muted-foreground">
-                      {formatCron(task.cron_expression)}
-                      {task.timezone && task.timezone !== "UTC"
+                      {formatSchedule(task)}
+                      {task.schedule_type !== "one_off_dates" &&
+                      task.timezone &&
+                      task.timezone !== "UTC"
                         ? ` · ${task.timezone}`
                         : ""}
                     </p>
@@ -402,6 +498,40 @@ export default function TasksPage() {
                     </option>
                   ))}
                 </select>
+                {FILTER_FIELDS.filter((f) => f.sources.includes(eventSource)).map(
+                  (f) =>
+                    f.type === "boolean" ? (
+                      <label
+                        key={f.key}
+                        className="flex items-center gap-2 text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={eventFilters[f.key] === true}
+                          onChange={(e) =>
+                            setEventFilters((prev) => ({
+                              ...prev,
+                              [f.key]: e.target.checked,
+                            }))
+                          }
+                        />
+                        {f.label}
+                      </label>
+                    ) : (
+                      <input
+                        key={f.key}
+                        className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                        placeholder={f.label}
+                        value={String(eventFilters[f.key] ?? "")}
+                        onChange={(e) =>
+                          setEventFilters((prev) => ({
+                            ...prev,
+                            [f.key]: e.target.value,
+                          }))
+                        }
+                      />
+                    )
+                )}
                 <textarea
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                   rows={3}

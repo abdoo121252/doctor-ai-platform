@@ -43,11 +43,14 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export type ScheduleType = "recurring" | "one_off_dates";
+
 export interface ScheduledTask {
   id: string;
   doctorId: string;
   name: string;
-  cronExpression: string;
+  cronExpression: string | null;
+  scheduleType: ScheduleType;
   instructions: string;
   enabled: boolean;
   timezone: string;
@@ -55,29 +58,50 @@ export interface ScheduledTask {
   createdAt: string;
 }
 
+/** One explicit run date for a one-off scheduled task. */
+export interface ScheduledTaskDate {
+  id: string;
+  taskId: string;
+  runAt: string;
+  firedAt: string | null;
+}
+
+/** Event sources supported by event triggers (Google + Microsoft). */
+export type EventSourceType =
+  | "gmail_new_message"
+  | "calendar_event_soon"
+  | "drive_new_file"
+  | "outlook_new_message"
+  | "outlook_calendar_soon"
+  | "onedrive_new_file";
+
 /** Detailed filter conditions for an event trigger. */
 export interface EventFilterRules {
-  /** gmail_new_message: sender address (exact) */
+  /** gmail_new_message / outlook_new_message: sender address */
   from?: string;
-  /** gmail_new_message: recipient address (exact) */
+  /** gmail_new_message / outlook_new_message: recipient address */
   to?: string;
-  /** gmail_new_message / calendar_event_soon / drive_new_file: substring in subject/title/name */
+  /** any source: substring in subject/title/name */
   subjectContains?: string;
-  /** gmail_new_message: substring in the email body */
+  /** gmail_new_message / outlook_new_message: substring in the message body */
   bodyContains?: string;
-  /** gmail_new_message: only messages with attachments */
+  /** gmail_new_message / outlook_new_message: only messages with attachments */
   hasAttachment?: boolean;
-  /** calendar_event_soon: substring in an attendee email */
+  /** calendar_event_soon / outlook_calendar_soon: substring in an attendee email */
   attendeeContains?: string;
-  /** drive_new_file: only files in this folder id */
+  /** calendar_event_soon / outlook_calendar_soon: substring in the event location */
+  locationContains?: string;
+  /** drive_new_file / onedrive_new_file: only files in this folder id */
   folderId?: string;
+  /** drive_new_file / onedrive_new_file: only files of this MIME type */
+  mimeType?: string;
 }
 
 export interface EventTrigger {
   id: string;
   doctorId: string;
   name: string;
-  eventSource: "gmail_new_message" | "calendar_event_soon" | "drive_new_file";
+  eventSource: EventSourceType;
   instructions: string;
   enabled: boolean;
   filterRules: EventFilterRules;

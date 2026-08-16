@@ -24,21 +24,31 @@ export async function listMessages(
         userId: "me",
         id: m.id!,
         format: "metadata",
-        metadataHeaders: ["From", "Subject", "Date"],
+        metadataHeaders: ["From", "To", "Subject", "Date"],
       });
 
       const headers = detail.data.payload?.headers ?? [];
       const from = headers.find((h) => h.name === "From")?.value ?? "Unknown";
+      const to = headers.find((h) => h.name === "To")?.value ?? "";
       const subject = headers.find((h) => h.name === "Subject")?.value ?? "(no subject)";
       const date = headers.find((h) => h.name === "Date")?.value ?? "";
+
+      const parts = detail.data.payload?.parts ?? [];
+      const hasAttachment = parts.some(
+        (p) =>
+          !!p.filename ||
+          (typeof p.mimeType === "string" && !p.mimeType.startsWith("text/") && p.mimeType !== "multipart/alternative")
+      );
 
       return {
         id: m.id!,
         threadId: detail.data.threadId,
         from,
+        to,
         subject,
         snippet: detail.data.snippet ?? "",
         date,
+        hasAttachment,
       };
     })
   );

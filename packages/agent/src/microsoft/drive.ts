@@ -8,7 +8,8 @@ interface GraphDriveItem {
   folder?: { childCount?: number } | null;
   file?: { mimeType?: string } | null;
   webUrl?: string;
-  parentReference?: { path?: string };
+  createdDateTime?: string;
+  parentReference?: { id?: string; path?: string };
 }
 
 export async function searchOneDrive(
@@ -29,6 +30,8 @@ export async function searchOneDrive(
     isFolder: !!d.folder,
     mimeType: d.file?.mimeType ?? null,
     webUrl: d.webUrl ?? null,
+    folderId: d.parentReference?.id ?? null,
+    createdTime: d.createdDateTime ?? null,
   }));
 
   return { items };

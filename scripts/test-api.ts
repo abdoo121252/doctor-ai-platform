@@ -164,6 +164,37 @@ async function testTasks(authCookie: string) {
   const stillThere = (reget.json.tasks ?? []).some((t: { id: string }) => t.id === taskId);
   if (!stillThere) ok("task confirmed removed from list");
   else bad("task confirmed removed from list");
+
+  // One-off dates
+  const oneOff = await call("", "POST", "/api/tasks", {
+    cookie: authCookie,
+    body: {
+      name: `API One-off Task ${Date.now()}`,
+      instructions: "Summarize on the given dates",
+      schedule_type: "one_off_dates",
+      dates: ["2099-01-13", "2099-01-16"],
+      time: "09:00",
+      timezone: "UTC",
+    },
+  });
+  const oneOffTask = oneOff.json?.task;
+  if (oneOff.status === 201 && oneOffTask?.id && oneOffTask?.schedule_type === "one_off_dates") {
+    ok(`POST /api/tasks one-off created id=${oneOffTask.id.slice(0, 8)}`);
+    const listRes = await call("", "GET", "/api/tasks", { cookie: authCookie });
+    const fetched = (listRes.json.tasks ?? []).find((t: { id: string }) => t.id === oneOffTask.id);
+    if (Array.isArray(fetched?.dates) && fetched.dates.length === 2) {
+      ok("GET /api/tasks returns one-off dates");
+    } else {
+      bad("GET /api/tasks returns one-off dates", JSON.stringify(fetched?.dates));
+    }
+  } else {
+    bad("POST /api/tasks one-off", `status ${oneOff.status} ${JSON.stringify(oneOff.json).slice(0, 160)}`);
+    return;
+  }
+
+  const oneOffDel = await call("", "DELETE", `/api/tasks/${oneOffTask.id}`, { cookie: authCookie });
+  if (oneOffDel.status === 200) ok("DELETE /api/tasks/:id removes one-off task");
+  else bad("DELETE /api/tasks/:id removes one-off task", `status ${oneOffDel.status}`);
 }
 
 async function testEvents(authCookie: string) {
@@ -212,6 +243,29 @@ async function testEvents(authCookie: string) {
   const del = await call("", "DELETE", `/api/events/${eventId}`, { cookie: authCookie });
   if (del.status === 200 && del.json.success === true) ok("DELETE /api/events/:id removes trigger");
   else bad("DELETE /api/events/:id", `status ${del.status}`);
+
+  // Microsoft source + new filter fields
+  const ms = await call("", "POST", "/api/events", {
+    cookie: authCookie,
+    body: {
+      name: `API OneDrive Trigger ${Date.now()}`,
+      event_source: "onedrive_new_file",
+      instructions: "Summarize the new OneDrive file",
+      filter_rules: { mimeType: "application/pdf", folderId: "abc123" },
+    },
+  });
+  const msEvent = ms.json?.event;
+  if (ms.status === 201 && msEvent?.id && msEvent?.event_source === "onedrive_new_file") {
+    ok("POST /api/events accepts onedrive_new_file source");
+    if (msEvent.filter_rules?.mimeType === "application/pdf") ok("POST /api/events stores mimeType");
+    else bad("POST /api/events stores mimeType", JSON.stringify(msEvent.filter_rules));
+  } else {
+    bad("POST /api/events onedrive source", `status ${ms.status} ${JSON.stringify(ms.json).slice(0, 160)}`);
+    return;
+  }
+  const msDel = await call("", "DELETE", `/api/events/${msEvent.id}`, { cookie: authCookie });
+  if (msDel.status === 200) ok("DELETE /api/events/:id removes onedrive trigger");
+  else bad("DELETE /api/events/:id removes onedrive trigger", `status ${msDel.status}`);
 }
 
 async function testApprovals(authCookie: string) {

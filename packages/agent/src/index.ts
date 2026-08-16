@@ -23,6 +23,8 @@ export {
 
 export { filterMatchesCondition } from "./filter";
 
+export { zonedTimeToUtc } from "./tools/automation";
+
 export { getOAuthUrl, exchangeCodeForTokens } from "./google/auth";
 export {
   getMicrosoftOAuthUrl,
@@ -33,6 +35,10 @@ export { encryptRefreshToken, decryptRefreshToken } from "./google/encryption";
 export { listMessages, sendMessage } from "./google/gmail";
 export { listEvents, insertEvent } from "./google/calendar";
 export { searchFiles } from "./google/drive";
+
+export { listOutlookMessages, sendOutlookMessage } from "./microsoft/mail";
+export { listOutlookEvents, createOutlookEvent } from "./microsoft/calendar";
+export { searchOneDrive, readOneDriveFile } from "./microsoft/drive";
 
 export { log, logWithClient, logInfo, logWarn, logError } from "./logger";
 export type { LogEntry } from "./logger";

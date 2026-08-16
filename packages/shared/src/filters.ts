@@ -56,7 +56,13 @@ export function doesEventMatchFilter(
       : d.attendees;
     if (!matchText(atts, r.attendeeContains)) return false;
   }
+  if (r.locationContains && !matchText(d.location, r.locationContains)) {
+    return false;
+  }
   if (r.folderId && !matchText(d.folderId ?? d.parents, r.folderId)) {
+    return false;
+  }
+  if (r.mimeType && !matchText(d.mimeType, r.mimeType)) {
     return false;
   }
   return true;

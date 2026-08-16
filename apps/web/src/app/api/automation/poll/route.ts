@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { listMessages, listEvents, searchFiles } from "@repo/agent";
+import {
+  listMessages,
+  listEvents,
+  searchFiles,
+  listOutlookMessages,
+  listOutlookEvents,
+  searchOneDrive,
+} from "@repo/agent";
 import { doesEventMatchFilter } from "@repo/shared";
 import type { EventFilterRules } from "@repo/shared";
 
@@ -60,8 +67,10 @@ async function pollSource(
       .map((m) => ({
         id: m.id,
         from: m.from,
+        to: m.to,
         subject: m.subject,
         snippet: m.snippet,
+        hasAttachment: m.hasAttachment,
         date: m.date,
         ts: Date.parse(m.date),
       }))
@@ -93,6 +102,56 @@ async function pollSource(
         name: f.name,
         mimeType: f.mimeType,
         webViewLink: f.webViewLink,
+        parents: f.parents,
+        createdTime: f.createdTime,
+        ts: Date.parse(f.createdTime ?? ""),
+      }))
+      .filter((f) => !!f.id && !Number.isNaN(f.ts) && f.ts > since);
+  }
+
+  if (eventSource === "outlook_new_message") {
+    const res = await listOutlookMessages(doctorId, 20, undefined, supabase);
+    const cutoff = since - GMAIL_OVERLAP_MS;
+    return res.messages
+      .map((m) => ({
+        id: m.id,
+        from: m.from,
+        to: m.to,
+        subject: m.subject,
+        snippet: m.snippet,
+        hasAttachment: m.hasAttachment,
+        date: m.date,
+        ts: Date.parse(m.date),
+      }))
+      .filter((m) => !Number.isNaN(m.ts) && m.ts > cutoff);
+  }
+
+  if (eventSource === "outlook_calendar_soon") {
+    const res = await listOutlookEvents(doctorId, 2, 20, supabase);
+    const now = Date.now();
+    const soon = now + CALENDAR_SOON_MS;
+    return res.events
+      .map((e) => ({
+        id: e.id ?? "",
+        summary: e.summary,
+        start: e.start,
+        end: e.end,
+        attendees: e.attendees,
+        location: e.location,
+        ts: Date.parse(e.start),
+      }))
+      .filter((e) => !!e.id && !Number.isNaN(e.ts) && e.ts >= now && e.ts <= soon);
+  }
+
+  if (eventSource === "onedrive_new_file") {
+    const res = await searchOneDrive(doctorId, "", supabase);
+    return res.items
+      .map((f) => ({
+        id: f.id ?? "",
+        name: f.name,
+        mimeType: f.mimeType,
+        webUrl: f.webUrl,
+        folderId: f.folderId,
         createdTime: f.createdTime,
         ts: Date.parse(f.createdTime ?? ""),
       }))

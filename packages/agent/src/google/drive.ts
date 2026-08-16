@@ -16,7 +16,7 @@ export async function searchFiles(
       ? `name contains '${query.replace(/'/g, "\\'")}'`
       : undefined,
     pageSize: maxResults,
-    fields: "files(id, name, mimeType, webViewLink, createdTime, modifiedTime, size)",
+    fields: "files(id, name, mimeType, webViewLink, createdTime, modifiedTime, size, parents)",
   });
 
   return {
@@ -29,6 +29,7 @@ export async function searchFiles(
       createdTime: f.createdTime,
       modifiedTime: f.modifiedTime,
       size: f.size,
+      parents: f.parents ?? [],
     })),
   };
 }

@@ -45,7 +45,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const validSources = ["gmail_new_message", "calendar_event_soon", "drive_new_file"];
+    const validSources = [
+      "gmail_new_message",
+      "calendar_event_soon",
+      "drive_new_file",
+      "outlook_new_message",
+      "outlook_calendar_soon",
+      "onedrive_new_file",
+    ];
     if (!validSources.includes(event_source)) {
       return NextResponse.json(
         { error: `event_source must be one of: ${validSources.join(", ")}` },

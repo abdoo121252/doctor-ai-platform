@@ -240,7 +240,8 @@ export interface Database {
           id: string;
           doctor_id: string;
           name: string;
-          cron_expression: string;
+          cron_expression: string | null;
+          schedule_type: string;
           instructions: string;
           enabled: boolean;
           timezone: string;
@@ -251,7 +252,8 @@ export interface Database {
           id?: string;
           doctor_id: string;
           name: string;
-          cron_expression: string;
+          cron_expression?: string | null;
+          schedule_type?: string;
           instructions: string;
           enabled?: boolean;
           timezone?: string;
@@ -262,12 +264,33 @@ export interface Database {
           id?: string;
           doctor_id?: string;
           name?: string;
-          cron_expression?: string;
+          cron_expression?: string | null;
+          schedule_type?: string;
           instructions?: string;
           enabled?: boolean;
           timezone?: string;
           last_run_at?: string | null;
           created_at?: string;
+        };
+      };
+      scheduled_task_dates: {
+        Row: {
+          id: string;
+          task_id: string;
+          run_at: string;
+          fired_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          run_at: string;
+          fired_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          run_at?: string;
+          fired_at?: string | null;
         };
       };
       event_triggers: {

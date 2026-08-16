@@ -15,7 +15,8 @@ interface ScheduledTaskRow {
   doctor_id: string;
   name: string;
   instructions: string;
-  cron_expression: string;
+  cron_expression: string | null;
+  schedule_type: string;
   timezone: string | null;
   last_run_at: string | null;
   enabled: boolean;
@@ -57,7 +58,15 @@ export const scheduledAgentSession = schedules.task({
 
     let dispatched = 0;
 
+    const recurring: ScheduledTaskRow[] = [];
+    const oneOff: ScheduledTaskRow[] = [];
     for (const row of tasks as ScheduledTaskRow[]) {
+      if (row.schedule_type === "one_off_dates") oneOff.push(row);
+      else recurring.push(row);
+    }
+
+    for (const row of recurring) {
+      if (!row.cron_expression) continue;
       const dueMs = lastDueMs(row.cron_expression, row.timezone || "UTC", now);
       if (dueMs === null) continue;
 
@@ -81,6 +90,52 @@ export const scheduledAgentSession = schedules.task({
       if (res.ok) dispatched++;
       else {
         console.error(`[Cron] Forward failed for task ${row.id}:`, res.status);
+      }
+    }
+
+    for (const row of oneOff) {
+      const { data: dates, error: dateErr } = await supabase
+        .from("scheduled_task_dates")
+        .select("id, run_at")
+        .eq("task_id", row.id)
+        .is("fired_at", null)
+        .lte("run_at", now.toISOString())
+        .order("run_at", { ascending: true });
+
+      if (dateErr || !dates || dates.length === 0) continue;
+
+      for (const d of dates as Array<{ id: string; run_at: string }>) {
+        await supabase
+          .from("scheduled_task_dates")
+          .update({ fired_at: new Date().toISOString() })
+          .eq("id", d.id);
+
+        const res = await forwardToAutomation({
+          doctorId: row.doctor_id,
+          sessionType: "cron",
+          taskId: row.id,
+          name: row.name,
+          instructions: row.instructions,
+        });
+
+        if (res.ok) dispatched++;
+        else {
+          console.error(`[Cron] Forward failed for one-off task ${row.id}:`, res.status);
+        }
+      }
+
+      // Auto-disable once every date has fired.
+      const { data: remaining } = await supabase
+        .from("scheduled_task_dates")
+        .select("id")
+        .eq("task_id", row.id)
+        .is("fired_at", null);
+
+      if (!remaining || remaining.length === 0) {
+        await supabase
+          .from("scheduled_tasks")
+          .update({ enabled: false })
+          .eq("id", row.id);
       }
     }
 

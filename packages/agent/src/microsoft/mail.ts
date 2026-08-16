@@ -5,6 +5,8 @@ interface GraphMessage {
   id: string;
   subject: string;
   from?: { emailAddress?: { address?: string; name?: string } };
+  toRecipients?: Array<{ emailAddress?: { address?: string; name?: string } }>;
+  hasAttachments?: boolean;
   receivedDateTime: string;
   bodyPreview?: string;
 }
@@ -18,7 +20,7 @@ export async function listOutlookMessages(
 ) {
   const token = await getMicrosoftAccessToken(doctorId, supabaseClient);
 
-  let path = `/me/mailFolders/inbox/messages?$top=${maxResults}&$select=id,subject,from,receivedDateTime,bodyPreview&$orderby=receivedDateTime desc`;
+  let path = `/me/mailFolders/inbox/messages?$top=${maxResults}&$select=id,subject,from,toRecipients,hasAttachments,receivedDateTime,bodyPreview&$orderby=receivedDateTime desc`;
   if (query) {
     path += `&$search="${encodeURIComponent(query).replace(/%22/g, '"')}"`;
   }
@@ -27,9 +29,14 @@ export async function listOutlookMessages(
   const messages = (data.value ?? []).map((m) => ({
     id: m.id,
     from: m.from?.emailAddress?.name ?? m.from?.emailAddress?.address ?? "Unknown",
+    to: (m.toRecipients ?? [])
+      .map((r) => r.emailAddress?.address ?? r.emailAddress?.name ?? "")
+      .filter(Boolean)
+      .join(", "),
     subject: m.subject ?? "(no subject)",
     snippet: m.bodyPreview ?? "",
     date: m.receivedDateTime ?? "",
+    hasAttachment: m.hasAttachments ?? false,
   }));
 
   return { messages };
