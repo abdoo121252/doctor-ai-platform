@@ -12,6 +12,7 @@ import {
   wrapToolOutput,
 } from "@/lib/chat-state";
 import { runChatTurn } from "@/lib/chat-runner";
+import { resumeAutomationTurn } from "@/lib/automation-runner";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
 
     const { data: session } = await supabase
       .from("chat_sessions")
-      .select("id")
+      .select("id, session_type")
       .eq("id", sessionId)
       .eq("doctor_id", doctorId)
       .single();
@@ -52,6 +53,8 @@ export async function POST(request: Request) {
       trace.end({ phase: "session-lookup", result: "not_found" });
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
+    const isAutomation =
+      session.session_type === "cron" || session.session_type === "event";
 
     const state = await loadChatState(supabase, sessionId);
     if (!state || state.status !== "awaiting_approval") {
@@ -69,6 +72,67 @@ export async function POST(request: Request) {
         { error: "Approval id does not match the pending request" },
         { status: 409 }
       );
+    }
+
+    // Automation (cron/event) approvals also live in `approval_requests` (the
+    // /review queue). Resolve that row AND resume via the automation runner so
+    // approving in chat stays in sync with /review.
+    if (isAutomation) {
+      trace.phase("automation-approval", { sessionId, approved });
+
+      const approvalStatus = approved ? "approved" : "rejected";
+      const { error: approvalUpdateError } = await supabase
+        .from("approval_requests")
+        .update({
+          status: approvalStatus,
+          resolved_at: new Date().toISOString(),
+          rejection_reason: approved ? null : "Rejected by doctor",
+        })
+        .eq("id", approvalId);
+
+      if (approvalUpdateError) {
+        trace.warn("approval_requests update failed", approvalUpdateError);
+      }
+
+      let resumeError: string | null = null;
+      try {
+        const result = await resumeAutomationTurn({
+          supabase,
+          doctorId,
+          sessionId,
+          approved,
+          revisedInput: body?.input,
+        });
+        trace.end({ phase: "complete", sessionId, result: result.status });
+      } catch (error) {
+        resumeError = error instanceof Error ? error.message : "Resume failed";
+        trace.error("automation resume failed", error as Error, { sessionId });
+      }
+
+      // The automation resume persists the full continuation to chat_state +
+      // conversations. Tell the client to reload the transcript (there is no
+      // token stream to play back for the automated loop).
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                type: "reload",
+                ...(resumeError ? { error: resumeError } : {}),
+              })}\n\n`
+            )
+          );
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+        },
+      });
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

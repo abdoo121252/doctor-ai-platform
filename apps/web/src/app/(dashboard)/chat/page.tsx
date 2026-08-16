@@ -419,6 +419,18 @@ function ChatView({
     setMessages(msgs);
   }, []);
 
+  const reloadSession = useCallback(() => {
+    if (!sessionId) return;
+    sessionCache.delete(sessionId);
+    fetch(`/api/sessions/${sessionId}/messages`)
+      .then((res) => res.json())
+      .then((data: LoadedData) => {
+        sessionCache.set(sessionId, data);
+        applyLoaded(data);
+      })
+      .catch(() => {});
+  }, [sessionId, applyLoaded]);
+
   useEffect(() => {
     let cancelled = false;
     if (!sessionId) {
@@ -730,6 +742,9 @@ function ChatView({
             case "approval":
               setAwaitingApproval(true);
               break;
+            case "reload":
+              reloadSession();
+              break;
             case "done":
               onSessionUpdated(sessionId, "");
               break;
@@ -778,6 +793,8 @@ function ChatView({
             });
           } else if (event.type === "tool-result") {
             applyToolResult(event);
+          } else if (event.type === "reload") {
+            reloadSession();
           } else if (event.type === "done") {
             onSessionUpdated(sessionId, "");
           } else if (event.type === "error") {
