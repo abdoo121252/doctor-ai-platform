@@ -1,3 +1,4 @@
+import "../websocket-polyfill";
 import { task } from "@trigger.dev/sdk/v3";
 import { createClient } from "@supabase/supabase-js";
 import { dispatchEventItem } from "../dispatch";

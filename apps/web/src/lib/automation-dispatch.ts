@@ -94,7 +94,10 @@ export async function runAutomationPayload(
     .single();
 
   if (sessionError || !session) {
-    return { status: "error", message: "Failed to create automation session" };
+    const detail = sessionError
+      ? `${sessionError.message} (${sessionError.code ?? "no-code"})`
+      : "no row returned";
+    return { status: "error", message: `Failed to create automation session: ${detail}` };
   }
 
   const sessionId = (session as { id: string }).id;

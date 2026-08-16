@@ -120,6 +120,9 @@ importers:
       ai:
         specifier: ^7.0.57
         version: 7.0.57(zod@3.25.76)
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
       zod:
         specifier: ^3.24.0
         version: 3.25.76
