@@ -40,6 +40,17 @@ interface ScheduledTask {
   dates?: Array<{ run_at: string; fired_at: string | null }>;
 }
 
+interface EventTriggerPath {
+  id: string;
+  name?: string;
+  filter: {
+    mode: "fields" | "ai";
+    fields?: Record<string, unknown>;
+    condition?: string;
+  };
+  instructions: string;
+}
+
 interface EventTrigger {
   id: string;
   name: string;
@@ -48,6 +59,7 @@ interface EventTrigger {
   enabled: boolean;
   filter_rules: Record<string, unknown> | null;
   condition: string | null;
+  paths: EventTriggerPath[];
   created_at: string;
 }
 
@@ -197,6 +209,34 @@ const FILTER_FIELDS: FilterField[] = [
   { key: "mimeType", label: "MIME type", type: "text", sources: ["drive_new_file", "onedrive_new_file"] },
 ];
 
+function getFieldsForSource(source: string): FilterField[] {
+  return FILTER_FIELDS.filter((f) => f.sources.includes(source));
+}
+
+function formatPathFilter(path: EventTriggerPath): string {
+  if (!path.filter) return "Always matches";
+  if (path.filter.mode === "ai") {
+    return path.filter.condition ? `AI: ${path.filter.condition}` : "AI: (always matches)";
+  }
+  // fields mode
+  if (!path.filter.fields || Object.keys(path.filter.fields).length === 0) return "Always matches (fields)";
+  const labels: Record<string, string> = {
+    from: "From",
+    to: "To",
+    subjectContains: "Subject",
+    bodyContains: "Body",
+    hasAttachment: "Attach",
+    attendeeContains: "Attendee",
+    locationContains: "Location",
+    folderId: "Folder",
+    mimeType: "Type",
+  };
+  const parts = Object.entries(path.filter.fields)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `${labels[k] ?? k}: ${v}`);
+  return parts.join(" · ");
+}
+
 export default function TasksPage() {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [events, setEvents] = useState<EventTrigger[]>([]);
@@ -215,9 +255,9 @@ export default function TasksPage() {
   const [taskInst, setTaskInst] = useState("");
   const [eventName, setEventName] = useState("");
   const [eventSource, setEventSource] = useState(EVENT_SOURCES[0]!.value);
-  const [eventInst, setEventInst] = useState("");
-  const [eventCondition, setEventCondition] = useState("");
-  const [eventFilters, setEventFilters] = useState<Record<string, string | boolean>>({});
+  const [eventPaths, setEventPaths] = useState<EventTriggerPath[]>([
+    { id: crypto.randomUUID(), name: "", filter: { mode: "fields" }, instructions: "" },
+  ]);
   const [submitting, setSubmitting] = useState(false);
   const [overrideTarget, setOverrideTarget] = useState<OverrideTarget | null>(null);
   const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
@@ -319,32 +359,27 @@ export default function TasksPage() {
 
   const createEvent = async (e: FormEvent) => {
     e.preventDefault();
-    if (!eventName || !eventInst) return;
+    if (!eventName || eventPaths.some((p) => !p.instructions.trim())) return;
     setSubmitting(true);
     try {
-      const filter_rules: Record<string, unknown> = {};
-      for (const f of FILTER_FIELDS) {
-        if (!f.sources.includes(eventSource)) continue;
-        const v = eventFilters[f.key];
-        if (v === undefined || v === null || v === "" || v === false) continue;
-        filter_rules[f.key] = v;
-      }
+      const paths = eventPaths.map((p) => ({
+        id: p.id,
+        name: p.name,
+        filter: p.filter,
+        instructions: p.instructions,
+      }));
       const res = await fetch("/api/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: eventName,
           event_source: eventSource,
-          instructions: eventInst,
-          condition: eventCondition.trim() || undefined,
-          filter_rules,
+          paths,
         }),
       });
       if (res.ok) {
         setEventName("");
-        setEventInst("");
-        setEventCondition("");
-        setEventFilters({});
+        setEventPaths([{ id: crypto.randomUUID(), name: "", filter: { mode: "fields" }, instructions: "" }]);
         setShowEventForm(false);
         fetchData();
       }
@@ -717,170 +752,315 @@ export default function TasksPage() {
           </Button>
         </div>
 
-        {showEventForm && (
-          <Card className="mb-4">
-            <CardContent className="pt-6">
-              <form onSubmit={createEvent} className="space-y-3">
-                <input
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  placeholder="Trigger name (e.g. Urgent Email Alert)"
-                  value={eventName}
-                  onChange={(e) => setEventName(e.target.value)}
-                />
-                <select
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  value={eventSource}
-                  onChange={(e) => setEventSource(e.target.value)}
-                >
-                  {EVENT_SOURCES.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-                {FILTER_FIELDS.filter((f) => f.sources.includes(eventSource)).map(
-                  (f) =>
-                    f.type === "boolean" ? (
-                      <label
-                        key={f.key}
-                        className="flex items-center gap-2 text-sm"
-                      >
+{showEventForm && (
+            <Card className="mb-4">
+              <CardContent className="pt-6">
+                <form onSubmit={createEvent} className="space-y-3">
+                  <input
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    placeholder="Trigger name (e.g. Urgent Email Alert)"
+                    value={eventName}
+                    onChange={(e) => setEventName(e.target.value)}
+                  />
+                  <select
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    value={eventSource}
+                    onChange={(e) => setEventSource(e.target.value)}
+                  >
+                    {EVENT_SOURCES.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Paths editor */}
+                  <div className="space-y-3 border-t pt-3">
+                    <h4 className="text-sm font-medium">Paths (evaluated in order)</h4>
+                    {eventPaths.map((path, idx) => (
+                      <div key={path.id} className="rounded-md border p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-muted-foreground">
+                            Path {idx + 1}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-destructive"
+                            onClick={() =>
+                              eventPaths.length > 1 &&
+                              setEventPaths((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            disabled={eventPaths.length <= 1}
+                            title="Remove path"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+
                         <input
-                          type="checkbox"
-                          checked={eventFilters[f.key] === true}
+                          className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                          placeholder="Path name (optional, e.g. Manager reprimand)"
+                          value={path.name}
                           onChange={(e) =>
-                            setEventFilters((prev) => ({
-                              ...prev,
-                              [f.key]: e.target.checked,
-                            }))
+                            setEventPaths((prev) =>
+                              prev.map((p) =>
+                                p.id === path.id ? { ...p, name: e.target.value } : p
+                              )
+                            )
                           }
                         />
-                        {f.label}
-                      </label>
-                    ) : (
-                      <input
-                        key={f.key}
-                        className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                        placeholder={f.label}
-                        value={String(eventFilters[f.key] ?? "")}
-                        onChange={(e) =>
-                          setEventFilters((prev) => ({
-                            ...prev,
-                            [f.key]: e.target.value,
-                          }))
-                        }
-                      />
-                    )
-                )}
-                <textarea
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  rows={3}
-                  placeholder="Instructions for the AI agent when this event fires"
-                  value={eventInst}
-                  onChange={(e) => setEventInst(e.target.value)}
-                />
-                <input
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  placeholder="Optional natural-language condition (e.g. only if the email is about grading deadlines)"
-                  value={eventCondition}
-                  onChange={(e) => setEventCondition(e.target.value)}
-                />
-                <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowEventForm(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button type="submit" size="sm" disabled={submitting}>
-                    {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-                    Create
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-        )}
 
-        {events.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            No event triggers yet. Create one to react to Gmail, Calendar, or Drive events.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {events.map((ev) => (
-              <Card key={ev.id}>
-                <CardContent className="flex items-center justify-between py-4">
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{ev.name}</span>
-                      {ev.enabled ? (
-                        <Badge variant="default" className="text-[10px]">
-                          Active
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="text-[10px]">
-                          Paused
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {formatSource(ev.event_source)}
-                    </p>
-                    {formatFilters(ev.filter_rules) && (
-                      <p className="truncate text-xs text-muted-foreground">
-                        {formatFilters(ev.filter_rules)}
-                      </p>
-                    )}
-                    <p className="truncate text-xs text-muted-foreground">
-                      {ev.instructions}
-                    </p>
-                  </div>
-                  <div className="ml-3 flex shrink-0 items-center gap-1">
+                        <select
+                          className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                          value={path.filter.mode}
+                          onChange={(e) =>
+                            setEventPaths((prev) =>
+                              prev.map((p) =>
+                                p.id === path.id
+                                  ? { ...p, filter: { ...p.filter, mode: e.target.value as "fields" | "ai" } }
+                                  : p
+                              )
+                            )
+                          }
+                        >
+                          <option value="fields">Fields filter (deterministic)</option>
+                          <option value="ai">AI condition (smart)</option>
+                        </select>
+
+                        {path.filter.mode === "fields" && (
+                          <div className="space-y-1.5">
+                            {getFieldsForSource(eventSource).map((f) =>
+                              f.type === "boolean" ? (
+                                <label key={f.key} className="flex items-center gap-2 text-sm">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!path.filter.fields?.[f.key]}
+                                    onChange={(e) =>
+                                      setEventPaths((prev) =>
+                                        prev.map((p) =>
+                                          p.id === path.id
+                                            ? {
+                                                ...p,
+                                                filter: {
+                                                  ...p.filter,
+                                                  fields: {
+                                                    ...p.filter.fields,
+                                                    [f.key]: e.target.checked,
+                                                  },
+                                                },
+                                              }
+                                            : p
+                                        )
+                                      )
+                                    }
+                                  />
+                                  {f.label}
+                                </label>
+                              ) : (
+                                <input
+                                  key={f.key}
+                                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                                  placeholder={f.label}
+                                  value={String(path.filter.fields?.[f.key] ?? "")}
+                                  onChange={(e) =>
+                                    setEventPaths((prev) =>
+                                      prev.map((p) =>
+                                        p.id === path.id
+                                          ? {
+                                              ...p,
+                                              filter: {
+                                                ...p.filter,
+                                                fields: {
+                                                  ...p.filter.fields,
+                                                  [f.key]: e.target.value,
+                                                },
+                                              },
+                                            }
+                                          : p
+                                      )
+                                    )
+                                  }
+                                />
+                              )
+                            )}
+                          </div>
+                        )}
+
+                        {path.filter.mode === "ai" && (
+                          <textarea
+                            className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                            rows={2}
+                            placeholder="Natural-language condition (e.g. email contains a reprimand from the manager)"
+                            value={path.filter.condition ?? ""}
+                            onChange={(e) =>
+                              setEventPaths((prev) =>
+                                prev.map((p) =>
+                                  p.id === path.id
+                                    ? {
+                                        ...p,
+                                        filter: {
+                                          ...p.filter,
+                                          condition: e.target.value,
+                                        },
+                                      }
+                                    : p
+                                )
+                              )
+                            }
+                          />
+                        )}
+
+                        <textarea
+                          className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                          rows={3}
+                          placeholder="Instructions for the AI agent when this path is selected"
+                          value={path.instructions}
+                          onChange={(e) =>
+                            setEventPaths((prev) =>
+                              prev.map((p) =>
+                                p.id === path.id ? { ...p, instructions: e.target.value } : p
+                              )
+                            )
+                          }
+                        />
+                      </div>
+                    ))}
+
                     <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8"
+                      type="button"
+                      variant="outline"
+                      size="sm"
                       onClick={() =>
-                        setOverrideTarget({
-                          type: "event_trigger",
-                          id: ev.id,
-                          name: ev.name,
-                        })
+                        setEventPaths((prev) => [
+                          ...prev,
+                          { id: crypto.randomUUID(), name: "", filter: { mode: "fields" }, instructions: "" },
+                        ])
                       }
-                      title="Approval overrides"
                     >
-                      <SlidersHorizontal className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8"
-                      onClick={() => toggleEvent(ev)}
-                      title={ev.enabled ? "Pause" : "Enable"}
-                    >
-                      {ev.enabled ? (
-                        <PowerOff className="h-4 w-4" />
-                      ) : (
-                        <Power className="h-4 w-4" />
-                      )}
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8 text-destructive"
-                      onClick={() => deleteEvent(ev.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
+                      <Plus className="mr-1.5 h-3.5 w-3.5" />
+                      Add Path
                     </Button>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
+
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowEventForm(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={
+                        submitting ||
+                        eventPaths.some((p) => !p.instructions.trim())
+                      }
+                    >
+                      {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                      Create
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          )}
+
+{events.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No event triggers yet. Create one to react to Gmail, Calendar, or Drive events.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {events.map((ev) => (
+                <Card key={ev.id}>
+                  <CardContent className="flex items-center justify-between py-4">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{ev.name}</span>
+                        {ev.enabled ? (
+                          <Badge variant="default" className="text-[10px]">
+                            Active
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-[10px]">
+                            Paused
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {formatSource(ev.event_source)}
+                      </p>
+                      {ev.paths && ev.paths.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {ev.paths.slice(0, 3).map((path, i) => (
+                            <p key={path.id} className="truncate text-xs text-muted-foreground">
+                              {path.name ? `${path.name}: ` : `Path ${i + 1}: `}
+                              {formatPathFilter(path)}
+                            </p>
+                          ))}
+                          {ev.paths.length > 3 && (
+                            <p className="text-xs text-muted-foreground">
+                              +{ev.paths.length - 3} more path{ev.paths.length - 3 === 1 ? "" : "s"}
+                            </p>
+                          )}
+                        </div>
+                      ) : formatFilters(ev.filter_rules) ? (
+                        <p className="truncate text-xs text-muted-foreground">
+                          {formatFilters(ev.filter_rules)}
+                        </p>
+                      ) : null}
+                      <p className="truncate text-xs text-muted-foreground">
+                        {ev.instructions}
+                      </p>
+                    </div>
+                    <div className="ml-3 flex shrink-0 items-center gap-1">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8"
+                        onClick={() =>
+                          setOverrideTarget({
+                            type: "event_trigger",
+                            id: ev.id,
+                            name: ev.name,
+                          })
+                        }
+                        title="Approval overrides"
+                      >
+                        <SlidersHorizontal className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8"
+                        onClick={() => toggleEvent(ev)}
+                        title={ev.enabled ? "Pause" : "Enable"}
+                      >
+                        {ev.enabled ? (
+                          <PowerOff className="h-4 w-4" />
+                        ) : (
+                          <Power className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-destructive"
+                        onClick={() => deleteEvent(ev.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
       </section>
     </div>
   );

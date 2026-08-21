@@ -310,6 +310,7 @@ export interface Database {
           filter_rules: Json;
           last_checked_at: string | null;
           condition: string | null;
+          paths: Json;
           created_at: string;
         };
         Insert: {
@@ -322,6 +323,7 @@ export interface Database {
           filter_rules?: Json;
           last_checked_at?: string | null;
           condition?: string | null;
+          paths?: Json;
           created_at?: string;
         };
         Update: {
@@ -334,6 +336,7 @@ export interface Database {
           filter_rules?: Json;
           last_checked_at?: string | null;
           condition?: string | null;
+          paths?: Json;
           created_at?: string;
         };
       };

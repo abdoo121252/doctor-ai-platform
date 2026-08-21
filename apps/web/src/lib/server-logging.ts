@@ -1,4 +1,4 @@
-import { log } from "@repo/agent";
+import { log } from "@repo/agent/logger";
 
 let initialized = false;
 

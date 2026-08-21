@@ -28,6 +28,7 @@ export async function POST(request: Request) {
   const triggerId = typeof body?.triggerId === "string" ? body.triggerId : "";
   const taskId = typeof body?.taskId === "string" ? body.taskId : "";
   const condition = typeof body?.condition === "string" ? body.condition : "";
+  const paths = Array.isArray(body?.paths) ? body.paths : undefined;
 
   if (!doctorId || !instructions) {
     return NextResponse.json(
@@ -46,6 +47,7 @@ export async function POST(request: Request) {
     triggerId,
     taskId,
     condition,
+    paths,
   });
 
   if (outcome.status === "skipped") {

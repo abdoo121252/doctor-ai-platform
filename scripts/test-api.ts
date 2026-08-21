@@ -266,6 +266,80 @@ async function testEvents(authCookie: string) {
   const msDel = await call("", "DELETE", `/api/events/${msEvent.id}`, { cookie: authCookie });
   if (msDel.status === 200) ok("DELETE /api/events/:id removes onedrive trigger");
   else bad("DELETE /api/events/:id removes onedrive trigger", `status ${msDel.status}`);
+
+  // Multi-path event trigger: two paths (one fields-mode, one AI-mode)
+  const multiPath = await call("", "POST", "/api/events", {
+    cookie: authCookie,
+    body: {
+      name: `API Paths Trigger ${Date.now()}`,
+      event_source: "gmail_new_message",
+      paths: [
+        {
+          id: "p1",
+          name: "From Ahmed",
+          filter: { mode: "fields", fields: { from: "ahmed@univ.edu" } },
+          instructions: "Summarize the email from Ahmed",
+        },
+        {
+          id: "p2",
+          name: "Trip",
+          filter: { mode: "ai", condition: "email is from Khalid and contains the word رحلة" },
+          instructions: "Send a thank-you note",
+        },
+      ],
+    },
+  });
+  const mpEvent = multiPath.json?.event;
+  if (multiPath.status === 201 && mpEvent?.id) {
+    ok("POST /api/events accepts multi-path trigger");
+    const stored = mpEvent.paths;
+    if (Array.isArray(stored) && stored.length === 2) {
+      ok("POST /api/events stores 2 paths");
+      if (stored[0]?.filter?.mode === "fields" && stored[1]?.filter?.mode === "ai") {
+        ok("POST /api/events stores fields + ai path filters");
+      } else {
+        bad("POST /api/events stores fields + ai path filters", JSON.stringify(stored));
+      }
+      if (stored[0]?.name === "From Ahmed" && stored[1]?.instructions === "Send a thank-you note") {
+        ok("POST /api/events stores path name + instructions");
+      } else {
+        bad("POST /api/events stores path name + instructions", JSON.stringify(stored));
+      }
+    } else {
+      bad("POST /api/events stores 2 paths", JSON.stringify(stored));
+    }
+  } else {
+    bad("POST /api/events multi-path", `status ${multiPath.status} ${JSON.stringify(multiPath.json).slice(0, 160)}`);
+    return;
+  }
+
+  // PATCH paths
+  const mpPatch = await call("", "PATCH", `/api/events/${mpEvent.id}`, {
+    cookie: authCookie,
+    body: {
+      paths: [
+        {
+          name: "Updated path",
+          filter: { mode: "ai", condition: "email mentions grading deadlines" },
+          instructions: "Draft a reminder to students",
+        },
+      ],
+    },
+  });
+  if (
+    mpPatch.status === 200 &&
+    Array.isArray(mpPatch.json.event?.paths) &&
+    mpPatch.json.event.paths.length === 1 &&
+    mpPatch.json.event.paths[0]?.name === "Updated path"
+  ) {
+    ok("PATCH /api/events/:id replaces paths");
+  } else {
+    bad("PATCH /api/events/:id replaces paths", `status ${mpPatch.status} ${JSON.stringify(mpPatch.json).slice(0, 160)}`);
+  }
+
+  const mpDel = await call("", "DELETE", `/api/events/${mpEvent.id}`, { cookie: authCookie });
+  if (mpDel.status === 200) ok("DELETE /api/events/:id removes multi-path trigger");
+  else bad("DELETE /api/events/:id removes multi-path trigger", `status ${mpDel.status}`);
 }
 
 async function testApprovals(authCookie: string) {

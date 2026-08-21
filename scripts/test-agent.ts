@@ -9,6 +9,7 @@ import { listMessages, sendMessage } from "@repo/agent/google/gmail";
 import { listEvents, insertEvent } from "@repo/agent/google/calendar";
 import { searchFiles } from "@repo/agent/google/drive";
 import { getSheetValues } from "@repo/agent/google/sheets";
+import { filterMatchesCondition, routeEventToPath } from "@repo/agent";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   global: { headers: { Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}` } },
@@ -25,6 +26,7 @@ async function main() {
   if (only === "all" || only === "calendar") await testCalendar();
   if (only === "all" || only === "drive") await testDrive();
   if (only === "all" || only === "sheets") await testSheets();
+  if (only === "all" || only === "filter") await testFilter();
 }
 
 async function testGmail() {
@@ -94,6 +96,66 @@ async function testSheets() {
     console.log("READ SHEET OK:", JSON.stringify(values, null, 2).slice(0, 600));
   } catch (err) {
     console.log("READ SHEET FAILED:", (err as Error).message);
+  }
+}
+
+async function testFilter() {
+  console.log("\n--- Semantic filter + path routing ---");
+
+  const eventData = {
+    from: "khalid@univ.edu",
+    to: "professor@univ.edu",
+    subject: "Trip plans and travel",
+    snippet: "Dear professor, I arranged the رحلة trip for next week. Please confirm.",
+    date: "2026-08-21T10:00:00Z",
+    hasAttachment: false,
+  };
+
+  try {
+    const { matches, reason } = await filterMatchesCondition(
+      "email is from Khalid",
+      eventData
+    );
+    console.log("filterMatchesCondition(from Khalid) ->", matches, "|", reason);
+  } catch (err) {
+    console.log("filterMatchesCondition FAILED:", (err as Error).message);
+  }
+
+  try {
+    const { pathId, reason } = await routeEventToPath(
+      [
+        {
+          id: "p_ahmed",
+          name: "From Ahmed",
+          filter: { mode: "ai", condition: "email is from Ahmed" },
+          instructions: "Summarize the email",
+        },
+        {
+          id: "p_trip",
+          name: "Trip from Khalid",
+          filter: {
+            mode: "ai",
+            condition: "email is from Khalid and contains the word trip",
+          },
+          instructions: "Send a thank-you note",
+        },
+        {
+          id: "p_default",
+          name: "Anything else",
+          filter: { mode: "ai", condition: "" },
+          instructions: "Just file it",
+        },
+      ],
+      eventData
+    );
+    console.log("routeEventToPath ->", pathId, "|", reason);
+    if (pathId === "p_trip") {
+      console.log("ROUTE OK: picked p_trip (Khalid + trip)");
+    } else {
+      console.log("ROUTE MISMATCH: expected p_trip, got", pathId);
+    }
+  } catch (err) {
+    console.log("routeEventToPath FAILED:", (err as Error).message);
   }
 }
 

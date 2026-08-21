@@ -9,7 +9,7 @@ import {
   searchOneDrive,
 } from "@repo/agent";
 import { doesEventMatchFilter } from "@repo/shared";
-import type { EventFilterRules } from "@repo/shared";
+import type { EventFilterRules, EventTriggerPath } from "@repo/shared";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -36,6 +36,7 @@ interface EventTriggerRow {
   filter_rules: EventFilterRules | Record<string, unknown> | null;
   event_source: string;
   last_checked_at: string | null;
+  paths: EventTriggerPath[] | null;
 }
 
 function getServiceSupabase() {
@@ -274,6 +275,7 @@ export async function POST(request: Request) {
             itemId: item.id,
             triggerId: t.id,
             ...(t.condition ? { condition: t.condition } : {}),
+            ...(t.paths && t.paths.length > 0 ? { paths: t.paths } : {}),
           })
         );
       }

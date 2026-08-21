@@ -36,11 +36,61 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { name, event_source, instructions, filter_rules, condition } = body;
+    const { name, event_source, instructions, filter_rules, condition, paths } = body;
 
-    if (!name || !event_source || !instructions) {
+    // If paths are provided, validate them; otherwise require legacy instructions
+    if (paths !== undefined) {
+      if (!Array.isArray(paths) || paths.length === 0) {
+        return NextResponse.json(
+          { error: "paths must be a non-empty array" },
+          { status: 400 }
+        );
+      }
+      for (const p of paths) {
+        if (typeof p?.instructions !== "string" || p.instructions.trim() === "") {
+          return NextResponse.json(
+            { error: "each path must have non-empty instructions" },
+            { status: 400 }
+          );
+        }
+        const f = p.filter;
+        if (
+          f !== undefined &&
+          (typeof f !== "object" || f === null || Array.isArray(f))
+        ) {
+          return NextResponse.json(
+            { error: "path.filter must be an object" },
+            { status: 400 }
+          );
+        }
+        if (f !== undefined) {
+          if (
+            f.mode !== "fields" &&
+            f.mode !== "ai"
+          ) {
+            return NextResponse.json(
+              { error: "path.filter.mode must be 'fields' or 'ai'" },
+              { status: 400 }
+            );
+          }
+          if (f.mode === "ai" && typeof f.condition !== "string") {
+            return NextResponse.json(
+              { error: "path.filter.condition must be a string for ai mode" },
+              { status: 400 }
+            );
+          }
+        }
+      }
+    } else if (!instructions) {
       return NextResponse.json(
         { error: "name, event_source, and instructions are required" },
+        { status: 400 }
+      );
+    }
+
+    if (!name || !event_source) {
+      return NextResponse.json(
+        { error: "name and event_source are required" },
         { status: 400 }
       );
     }
@@ -60,6 +110,7 @@ export async function POST(request: Request) {
       );
     }
 
+    // Legacy filter_rules validation
     if (
       filter_rules !== undefined &&
       (typeof filter_rules !== "object" || filter_rules === null || Array.isArray(filter_rules))
@@ -70,15 +121,31 @@ export async function POST(request: Request) {
       );
     }
 
+    // Normalize paths: assign ids if missing, default filter to fields+empty (always match)
+    const normalizedPaths = paths?.map((p: any) => ({
+      id: p.id ?? crypto.randomUUID(),
+      name: p.name,
+      filter:
+        p.filter && p.filter.mode
+          ? p.filter
+          : { mode: "fields", fields: p.filter?.fields ?? {} },
+      instructions: p.instructions,
+    }));
+
+    const insertInstructions = normalizedPaths?.length
+      ? normalizedPaths[0].instructions
+      : instructions;
+
     const { data, error } = await supabase
       .from("event_triggers")
       .insert({
         doctor_id: auth.user.id,
         name,
         event_source,
-        instructions,
+        instructions: insertInstructions,
         filter_rules: filter_rules ?? {},
         condition: typeof condition === "string" ? condition : null,
+        paths: normalizedPaths ?? [],
         enabled: true,
       })
       .select()

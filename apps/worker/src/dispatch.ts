@@ -1,5 +1,5 @@
 import { doesEventMatchFilter } from "@repo/shared";
-import type { EventFilterRules } from "@repo/shared";
+import type { EventFilterRules, EventTriggerPath } from "@repo/shared";
 
 function getAutomationConfig() {
   const baseUrl = (process.env.AUTOMATION_BASE_URL ?? "http://localhost:3000").replace(
@@ -78,6 +78,7 @@ interface EventTriggerRow {
   instructions: string;
   condition: string | null;
   filter_rules: EventFilterRules | Record<string, unknown> | null;
+  paths: EventTriggerPath[] | null;
 }
 
 /**
@@ -116,6 +117,7 @@ export async function dispatchEventItem(
       name: t.name,
       instructions: t.instructions,
       condition: t.condition ?? undefined,
+      ...(t.paths && t.paths.length > 0 ? { paths: t.paths } : {}),
     });
     if (res.ok) dispatched++;
   }

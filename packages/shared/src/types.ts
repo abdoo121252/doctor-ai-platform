@@ -97,6 +97,25 @@ export interface EventFilterRules {
   mimeType?: string;
 }
 
+/**
+ * A path's filter condition. Either the deterministic field filter
+ * (mode: "fields") or a natural-language condition evaluated by the AI
+ * (mode: "ai"). An empty fields object / empty condition always matches.
+ */
+export type EventTriggerPathFilter =
+  | { mode: "fields"; fields: EventFilterRules }
+  | { mode: "ai"; condition: string };
+
+/** One branch of an event trigger: its condition + the instructions to run. */
+export interface EventTriggerPath {
+  id: string;
+  /** Optional short label (e.g. "Manager reprimand") shown in UI + passed to the AI. */
+  name?: string;
+  filter: EventTriggerPathFilter;
+  /** Agent instructions executed when this path is selected. */
+  instructions: string;
+}
+
 export interface EventTrigger {
   id: string;
   doctorId: string;
@@ -107,5 +126,7 @@ export interface EventTrigger {
   filterRules: EventFilterRules;
   lastCheckedAt: string | null;
   condition: string | null;
+  /** Multi-path branches. Empty array = legacy single-instruction trigger. */
+  paths: EventTriggerPath[];
   createdAt: string;
 }

@@ -125,6 +125,24 @@ const filterRulesSchema = z.object({
     .describe("Only match files of this MIME type (e.g. application/pdf)"),
 });
 
+const pathFilterSchema = z.union([
+  z.object({
+    mode: z.literal("fields"),
+    fields: filterRulesSchema.optional(),
+  }),
+  z.object({
+    mode: z.literal("ai"),
+    condition: z.string().describe("Natural-language condition evaluated by the AI"),
+  }),
+]);
+
+const pathSchema = z.object({
+  id: z.string().optional().describe("Auto-generated if omitted"),
+  name: z.string().optional().describe("Short label for this path (e.g. 'Manager reprimand')"),
+  filter: pathFilterSchema.optional().describe("Condition for this path; omit for always-match fallback"),
+  instructions: z.string().describe("What the agent should do when this path is selected"),
+});
+
 /**
  * Build a 5-field cron string from a structured schedule spec.
  */
@@ -306,35 +324,84 @@ export function createScheduleTaskTool(ctx: AgentContext) {
 export function createEventTriggerTool(ctx: AgentContext) {
   return tool({
     description:
-      "Create an event trigger that reacts to a specific event with detailed " +
-      "filters. Use this when the professor wants to be notified / act when " +
-      "something happens, e.g. \"when I get an email from admissions@univ.edu " +
-      "containing 'appeal', summarize it\". Filter fields vary by source: " +
-      "gmail_new_message / outlook_new_message support from/to/subjectContains/bodyContains/hasAttachment; " +
-      "calendar_event_soon / outlook_calendar_soon support subjectContains/attendeeContains/locationContains; " +
-      "drive_new_file / onedrive_new_file support subjectContains/folderId/mimeType.",
+      "Create an event trigger with one or more paths. Each path has its own " +
+      "filter (either deterministic fields OR an AI natural-language condition) " +
+      "and its own agent instructions. When an event arrives, the system evaluates " +
+      "paths in order: fields-mode paths match deterministically (cheap, no AI call); " +
+      "ai-mode paths are evaluated by ONE AI call that picks the matching path (not yes/no). " +
+      "The selected path's instructions run. If no path matches, the event is skipped. " +
+      "Use this for routing: e.g. path 1: fields {from: 'manager@univ.edu'} -> summarize; " +
+      "path 2: ai condition 'email contains congratulations' -> send thank-you note. " +
+      "Fields within a path are ANDed; multiple paths give OR semantics.",
     inputSchema: z.object({
       name: z.string().describe("Short label for the trigger"),
       event_source: z
         .enum(EVENT_SOURCES)
         .describe("The event source this trigger reacts to"),
+      // Legacy single-instruction mode (kept for backward compatibility)
       instructions: z
         .string()
-        .describe("What the agent should do when the event matches"),
+        .optional()
+        .describe("Legacy: what the agent should do when the event matches"),
       filter_rules: filterRulesSchema
         .optional()
-        .describe("Detailed filter conditions; omit for no filtering"),
+        .describe("Legacy: detailed filter conditions; omit for no filtering"),
+      condition: z
+        .string()
+        .optional()
+        .describe("Legacy: natural-language condition for AI pre-filter"),
+      // New multi-path mode
+      paths: z
+        .array(pathSchema)
+        .min(1)
+        .optional()
+        .describe(
+          "Multiple paths, each with its own filter + instructions. " +
+          "If provided, legacy fields are ignored."
+        ),
     }),
-    execute: async ({ name, event_source, instructions, filter_rules }) => {
+    execute: async ({
+      name,
+      event_source,
+      instructions,
+      filter_rules,
+      condition,
+      paths,
+    }) => {
       const supabase = getSupabase(ctx);
+
+      let insertInstructions = instructions ?? "";
+      let insertPaths: any[] = [];
+
+      if (paths && paths.length > 0) {
+        // Multi-path mode: normalize paths
+        insertPaths = paths.map((p) => ({
+          id: p.id ?? crypto.randomUUID(),
+          name: p.name,
+          filter:
+            p.filter && p.filter.mode
+              ? p.filter
+              : ({ mode: "fields", fields: (p.filter as any)?.fields ?? {} } as any),
+          instructions: p.instructions,
+        }));
+        insertInstructions = insertPaths[0].instructions;
+      } else if (instructions) {
+        // Legacy single-instruction mode
+        insertInstructions = instructions;
+      } else {
+        throw new Error("Either paths or instructions must be provided");
+      }
+
       const { data, error } = await supabase
         .from("event_triggers")
         .insert({
           doctor_id: ctx.doctorId,
           name,
           event_source,
-          instructions,
+          instructions: insertInstructions,
           filter_rules: filter_rules ?? {},
+          condition: condition ?? null,
+          paths: insertPaths,
           enabled: true,
         })
         .select()
@@ -348,6 +415,7 @@ export function createEventTriggerTool(ctx: AgentContext) {
       logInfo("tool:createEventTrigger", "Event trigger created", ctx.doctorId, {
         triggerId: (data as { id: string }).id,
         eventSource: event_source,
+        pathCount: insertPaths.length,
       });
 
       return { created: true, trigger: data };

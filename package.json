@@ -12,6 +12,7 @@
     "test:agent": "tsx scripts/test-agent.ts",
     "test:api": "tsx scripts/test-api.ts",
     "test:chat": "tsx scripts/test-chat.ts",
+    "test:m365": "tsx scripts/test-m365-agent.ts",
     "test:toolsensitivity": "tsx scripts/test-tool-sensitivity.ts"
   },
   "devDependencies": {

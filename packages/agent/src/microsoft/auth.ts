@@ -6,8 +6,14 @@ const AUTHORITY = "https://login.microsoftonline.com/common/oauth2/v2.0";
 const GRAPH_SCOPES = [
   "Mail.ReadWrite",
   "Mail.Send",
+  "MailboxSettings.ReadWrite",
   "Calendars.ReadWrite",
+  "Contacts.ReadWrite",
+  "Tasks.ReadWrite",
   "Files.ReadWrite",
+  "Files.ReadWrite.All",
+  "Sites.Read.All",
+  "People.Read",
   "User.Read",
   "offline_access",
 ].join(" ");

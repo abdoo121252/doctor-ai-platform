@@ -1,10 +1,126 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { streamText, generateText, isStepCount } from "ai";
-import type { LanguageModel } from "ai";
-import { createReadEmailsTool, createSendEmailTool } from "./tools/gmail";
-import { createReadCalendarTool, createCreateEventTool } from "./tools/calendar";
-import { createSearchDriveTool } from "./tools/drive";
-import { createReadSheetTool } from "./tools/sheets";
+import type { LanguageModel, Tool } from "ai";
+import {
+  createReadEmailsTool,
+  createSendEmailTool,
+  createSearchGmailMessagesTool,
+  createGetGmailMessageTool,
+  createGetGmailMessagesBatchTool,
+  createGetGmailAttachmentTool,
+  createGetGmailThreadTool,
+  createGetGmailThreadsBatchTool,
+  createModifyGmailLabelsTool,
+  createBatchModifyGmailLabelsTool,
+  createListGmailLabelsTool,
+  createManageGmailLabelTool,
+  createDraftGmailMessageTool,
+  createListGmailFiltersTool,
+  createManageGmailFilterTool,
+} from "./tools/gmail";
+import {
+  createReadCalendarTool,
+  createCreateEventTool,
+  createListCalendarsTool,
+  createGetEventsTool,
+  createUpdateEventTool,
+  createDeleteEventTool,
+  createCreateCalendarTool,
+  createQueryFreebusyTool,
+  createManageOutOfOfficeTool,
+  createManageFocusTimeTool,
+} from "./tools/calendar";
+import {
+  createSearchDriveTool,
+  createGetDriveFileContentTool,
+  createGetDriveDownloadUrlTool,
+  createCreateDriveFileTool,
+  createCreateDriveFolderTool,
+  createImportDriveFileTool,
+  createGetDriveShareableLinkTool,
+  createListDriveItemsTool,
+  createCopyDriveFileTool,
+  createUpdateDriveFileTool,
+  createDeleteDriveFileTool,
+  createGetDrivePermissionsTool,
+  createSetDrivePermissionsTool,
+  createCheckDrivePublicAccessTool,
+} from "./tools/drive";
+import {
+  createReadSheetTool,
+  createCreateSpreadsheetTool,
+  createListSpreadsheetsTool,
+  createGetSpreadsheetInfoTool,
+  createModifySheetValuesTool,
+  createAppendSheetValuesTool,
+  createCreateSheetTool,
+  createBatchUpdateSheetTool,
+  createListSheetTablesTool,
+  createListSheetCommentsTool,
+  createFormatSheetRangeTool,
+  createMoveSheetRowsTool,
+  createResizeSheetDimensionsTool,
+  createManageConditionalFormattingTool,
+} from "./tools/sheets";
+import {
+  createSearchDocsTool,
+  createGetDocContentTool,
+  createGetDocAsMarkdownTool,
+  createCreateDocTool,
+  createBatchUpdateDocTool,
+  createExportDocToPdfTool,
+  createListDocsInFolderTool,
+  createListDocCommentsTool,
+  createInsertDocImageTool,
+  createFindAndReplaceDocTool,
+  createUpdateParagraphStyleTool,
+  createUpdateDocHeadersFootersTool,
+  createInspectDocStructureTool,
+  createCreateTableWithDataTool,
+  createConvertFileToGoogleDocTool,
+  createReadPdfContentTool,
+} from "./tools/docs";
+import {
+  createCreatePresentationTool,
+  createGetPresentationTool,
+  createBatchUpdatePresentationTool,
+  createGetPageTool,
+  createGetPageThumbnailTool,
+  createListPresentationCommentsTool,
+} from "./tools/slides";
+import {
+  createCreateFormTool,
+  createGetFormTool,
+  createBatchUpdateFormTool,
+  createListFormResponsesTool,
+  createGetFormResponseTool,
+  createSetPublishSettingsTool,
+} from "./tools/forms";
+import {
+  createListTaskListsTool,
+  createGetTaskListTool,
+  createManageTaskListTool,
+  createListTasksTool,
+  createGetTaskTool,
+  createManageTaskTool,
+} from "./tools/tasks";
+import {
+  createListContactsTool,
+  createGetContactTool,
+  createSearchContactsTool,
+  createManageContactTool,
+  createManageContactsBatchTool,
+  createListContactGroupsTool,
+  createGetContactGroupTool,
+  createManageContactGroupTool,
+} from "./tools/contacts";
+import {
+  createListSpacesTool,
+  createGetMessagesTool,
+  createSendMessageTool,
+  createSearchMessagesTool,
+  createCreateReactionTool,
+} from "./tools/chat";
 import {
   createScheduleTaskTool,
   createEventTriggerTool,
@@ -12,22 +128,78 @@ import {
 import {
   createReadOutlookEmailsTool,
   createSendOutlookEmailTool,
+  createReadOutlookMessageTool,
+  createGetOutlookAttachmentTool,
+  createReplyOutlookEmailTool,
+  createDraftOutlookReplyAllTool,
+  createDraftOutlookEmailTool,
+  createUpdateOutlookDraftTool,
+  createSendOutlookDraftTool,
+  createListOutlookDraftsTool,
+  createSearchOutlookMessagesTool,
+  createMoveOutlookMessagesTool,
+  createListOutlookFoldersTool,
+  createCreateOutlookFolderTool,
+  createListOutlookRulesTool,
+  createCreateOutlookRuleTool,
+  createGetOutlookFocusedInboxTool,
+  createListOutlookCategoriesTool,
+  createCreateOutlookCategoryTool,
+  createUpdateOutlookCategoryTool,
+  createDeleteOutlookCategoryTool,
+  createApplyOutlookCategoriesTool,
+  createRemoveOutlookCategoriesTool,
   createReadOutlookCalendarTool,
   createCreateOutlookEventTool,
+  createGetOutlookEventTool,
+  createUpdateOutlookEventTool,
+  createDeleteOutlookEventTool,
   createSearchOneDriveTool,
+  createSearchOneDriveAllTool,
+  createListOneDriveItemsTool,
+  createGetOneDriveItemTool,
   createReadOneDriveFileTool,
+  createDownloadOneDriveFileTool,
+  createUploadOneDriveFileTool,
+  createDeleteOneDriveItemTool,
+  createShareOneDriveItemTool,
+  createMoveOneDriveItemTool,
+  createCopyOneDriveItemTool,
+  createCreateOneDriveFolderTool,
+  createSearchM365Tool,
+  createListOutlookContactsTool,
+  createSearchOutlookContactsTool,
+  createGetOutlookContactTool,
+  createCreateOutlookContactTool,
+  createUpdateOutlookContactTool,
+  createDeleteOutlookContactTool,
+  createListOutlookContactFoldersTool,
+  createCreateOutlookContactFolderTool,
+  createListTodoListsTool,
+  createCreateTodoListTool,
+  createGetTodoListTool,
+  createUpdateTodoListTool,
+  createDeleteTodoListTool,
+  createListTodoTasksTool,
+  createCreateTodoTaskTool,
+  createGetTodoTaskTool,
+  createUpdateTodoTaskTool,
+  createDeleteTodoTaskTool,
+  createListTodoChecklistTool,
+  createAddTodoChecklistItemTool,
+  createUpdateTodoChecklistItemTool,
 } from "./microsoft/tools";
 import type { AgentContext } from "./context";
 import type { AgentToolName } from "@repo/shared";
 
-const opencode = createOpenAICompatible({
-  name: "opencode",
-  baseURL: "https://opencode.ai/zen/go/v1",
-  apiKey: process.env.OPENAI_API_KEY,
+const nvidia = createOpenAICompatible({
+  name: "nvidia",
+  baseURL: "https://integrate.api.nvidia.com/v1",
+  apiKey: process.env.NVIDIA_API_KEY,
 });
 
 export function getModel(): LanguageModel {
-  return opencode("deepseek-v4-flash");
+  return nvidia("nvidia/nemotron-3-nano-30b-a3b");
 }
 
 const SYSTEM_PROMPT = `You are a university professor's personal AI assistant connected to their accounts (Google: Gmail, Calendar, Sheets, Drive — Microsoft: Outlook mail, Outlook calendar, OneDrive).
@@ -74,34 +246,253 @@ export interface StreamChatResponse {
  * resolved from `context.toolSensitivity` (already merged with defaults
  * by the caller) — fall back to all non-sensitive if unset.
  */
-export function buildTools(context: AgentContext) {
+export function buildTools(context: AgentContext): Record<string, Tool> {
   const sensitive = (name: AgentToolName) =>
     context.toolSensitivity?.[name] ?? false;
 
   return {
     readEmails: createReadEmailsTool(context),
     sendEmail: createSendEmailTool(context, sensitive("sendEmail")),
+    searchGmailMessages: createSearchGmailMessagesTool(context),
+    getGmailMessage: createGetGmailMessageTool(context),
+    getGmailMessagesBatch: createGetGmailMessagesBatchTool(context),
+    getGmailAttachment: createGetGmailAttachmentTool(context),
+    getGmailThread: createGetGmailThreadTool(context),
+    getGmailThreadsBatch: createGetGmailThreadsBatchTool(context),
+    modifyGmailLabels: createModifyGmailLabelsTool(context),
+    batchModifyGmailLabels: createBatchModifyGmailLabelsTool(context),
+    listGmailLabels: createListGmailLabelsTool(context),
+    manageGmailLabel: createManageGmailLabelTool(context),
+    draftGmailMessage: createDraftGmailMessageTool(context),
+    listGmailFilters: createListGmailFiltersTool(context),
+    manageGmailFilter: createManageGmailFilterTool(context),
     readCalendar: createReadCalendarTool(context),
     createEvent: createCreateEventTool(context, sensitive("createEvent")),
+    listCalendars: createListCalendarsTool(context),
+    getEvents: createGetEventsTool(context),
+    updateEvent: createUpdateEventTool(context),
+    deleteEvent: createDeleteEventTool(context),
+    createCalendar: createCreateCalendarTool(context),
+    queryFreebusy: createQueryFreebusyTool(context),
+    manageOutOfOffice: createManageOutOfOfficeTool(context),
+    manageFocusTime: createManageFocusTimeTool(context),
     searchDrive: createSearchDriveTool(context, sensitive("searchDrive")),
+    getDriveFileContent: createGetDriveFileContentTool(context),
+    getDriveDownloadUrl: createGetDriveDownloadUrlTool(context),
+    createDriveFile: createCreateDriveFileTool(context),
+    createDriveFolder: createCreateDriveFolderTool(context),
+    importDriveFile: createImportDriveFileTool(context),
+    getDriveShareableLink: createGetDriveShareableLinkTool(context),
+    listDriveItems: createListDriveItemsTool(context),
+    copyDriveFile: createCopyDriveFileTool(context),
+    updateDriveFile: createUpdateDriveFileTool(context),
+    deleteDriveFile: createDeleteDriveFileTool(context),
+    getDrivePermissions: createGetDrivePermissionsTool(context),
+    setDrivePermissions: createSetDrivePermissionsTool(context),
+    checkDrivePublicAccess: createCheckDrivePublicAccessTool(context),
     readSheet: createReadSheetTool(context, sensitive("readSheet")),
+    createSpreadsheet: createCreateSpreadsheetTool(context),
+    listSpreadsheets: createListSpreadsheetsTool(context),
+    getSpreadsheetInfo: createGetSpreadsheetInfoTool(context),
+    modifySheetValues: createModifySheetValuesTool(context),
+    appendSheetValues: createAppendSheetValuesTool(context),
+    createSheet: createCreateSheetTool(context),
+    batchUpdateSheet: createBatchUpdateSheetTool(context),
+    listSheetTables: createListSheetTablesTool(context),
+    listSheetComments: createListSheetCommentsTool(context),
+    formatSheetRange: createFormatSheetRangeTool(context),
+    moveSheetRows: createMoveSheetRowsTool(context),
+    resizeSheetDimensions: createResizeSheetDimensionsTool(context),
+    manageConditionalFormatting: createManageConditionalFormattingTool(context),
+    searchDocs: createSearchDocsTool(context),
+    getDocContent: createGetDocContentTool(context),
+    getDocAsMarkdown: createGetDocAsMarkdownTool(context),
+    createDoc: createCreateDocTool(context),
+    batchUpdateDoc: createBatchUpdateDocTool(context),
+    exportDocToPdf: createExportDocToPdfTool(context),
+    listDocsInFolder: createListDocsInFolderTool(context),
+    listDocComments: createListDocCommentsTool(context),
+    insertDocImage: createInsertDocImageTool(context),
+    findAndReplaceDoc: createFindAndReplaceDocTool(context),
+    updateParagraphStyle: createUpdateParagraphStyleTool(context),
+    updateDocHeadersFooters: createUpdateDocHeadersFootersTool(context),
+    inspectDocStructure: createInspectDocStructureTool(context),
+    createTableWithData: createCreateTableWithDataTool(context),
+    convertFileToGoogleDoc: createConvertFileToGoogleDocTool(context, sensitive("convertFileToGoogleDoc")),
+    readPdfContent: createReadPdfContentTool(context, sensitive("readPdfContent")),
+    createPresentation: createCreatePresentationTool(context),
+    getPresentation: createGetPresentationTool(context),
+    batchUpdatePresentation: createBatchUpdatePresentationTool(context),
+    getPage: createGetPageTool(context),
+    getPageThumbnail: createGetPageThumbnailTool(context),
+    listPresentationComments: createListPresentationCommentsTool(context),
+    createForm: createCreateFormTool(context),
+    getForm: createGetFormTool(context),
+    batchUpdateForm: createBatchUpdateFormTool(context),
+    listFormResponses: createListFormResponsesTool(context),
+    getFormResponse: createGetFormResponseTool(context),
+    setPublishSettings: createSetPublishSettingsTool(context),
+    listTaskLists: createListTaskListsTool(context),
+    getTaskList: createGetTaskListTool(context),
+    manageTaskList: createManageTaskListTool(context),
+    listTasks: createListTasksTool(context),
+    getTask: createGetTaskTool(context),
+    manageTask: createManageTaskTool(context),
+    listContacts: createListContactsTool(context),
+    getContact: createGetContactTool(context),
+    searchContacts: createSearchContactsTool(context),
+    manageContact: createManageContactTool(context),
+    manageContactsBatch: createManageContactsBatchTool(context),
+    listContactGroups: createListContactGroupsTool(context),
+    getContactGroup: createGetContactGroupTool(context),
+    manageContactGroup: createManageContactGroupTool(context),
+    listChatSpaces: createListSpacesTool(context),
+    getChatMessages: createGetMessagesTool(context),
+    sendChatMessage: createSendMessageTool(context),
+    searchChatMessages: createSearchMessagesTool(context),
+    createChatReaction: createCreateReactionTool(context),
     readOutlookEmails: createReadOutlookEmailsTool(context),
     sendOutlookEmail: createSendOutlookEmailTool(
       context,
       sensitive("sendOutlookEmail")
+    ),
+    readOutlookMessage: createReadOutlookMessageTool(context),
+    getOutlookAttachment: createGetOutlookAttachmentTool(context),
+    replyOutlookEmail: createReplyOutlookEmailTool(
+      context,
+      sensitive("replyOutlookEmail")
+    ),
+    draftOutlookReplyAll: createDraftOutlookReplyAllTool(context),
+    draftOutlookEmail: createDraftOutlookEmailTool(context),
+    updateOutlookDraft: createUpdateOutlookDraftTool(context),
+    sendOutlookDraft: createSendOutlookDraftTool(
+      context,
+      sensitive("sendOutlookDraft")
+    ),
+    listOutlookDrafts: createListOutlookDraftsTool(context),
+    searchOutlookMessages: createSearchOutlookMessagesTool(context),
+    moveOutlookMessages: createMoveOutlookMessagesTool(
+      context,
+      sensitive("moveOutlookMessages")
+    ),
+    listOutlookFolders: createListOutlookFoldersTool(context),
+    createOutlookFolder: createCreateOutlookFolderTool(context),
+    listOutlookRules: createListOutlookRulesTool(context),
+    createOutlookRule: createCreateOutlookRuleTool(
+      context,
+      sensitive("createOutlookRule")
+    ),
+    getOutlookFocusedInbox: createGetOutlookFocusedInboxTool(context),
+    listOutlookCategories: createListOutlookCategoriesTool(context),
+    createOutlookCategory: createCreateOutlookCategoryTool(
+      context,
+      sensitive("createOutlookCategory")
+    ),
+    updateOutlookCategory: createUpdateOutlookCategoryTool(context),
+    deleteOutlookCategory: createDeleteOutlookCategoryTool(
+      context,
+      sensitive("deleteOutlookCategory")
+    ),
+    applyOutlookCategories: createApplyOutlookCategoriesTool(
+      context,
+      sensitive("applyOutlookCategories")
+    ),
+    removeOutlookCategories: createRemoveOutlookCategoriesTool(
+      context,
+      sensitive("removeOutlookCategories")
     ),
     readOutlookCalendar: createReadOutlookCalendarTool(context),
     createOutlookEvent: createCreateOutlookEventTool(
       context,
       sensitive("createOutlookEvent")
     ),
+    getOutlookEvent: createGetOutlookEventTool(context),
+    updateOutlookEvent: createUpdateOutlookEventTool(
+      context,
+      sensitive("updateOutlookEvent")
+    ),
+    deleteOutlookEvent: createDeleteOutlookEventTool(
+      context,
+      sensitive("deleteOutlookEvent")
+    ),
     searchOneDrive: createSearchOneDriveTool(
       context,
       sensitive("searchOneDrive")
     ),
+    searchOneDriveAll: createSearchOneDriveAllTool(context),
+    listOneDriveItems: createListOneDriveItemsTool(context),
+    getOneDriveItem: createGetOneDriveItemTool(context),
     readOneDriveFile: createReadOneDriveFileTool(
       context,
       sensitive("readOneDriveFile")
+    ),
+    downloadOneDriveFile: createDownloadOneDriveFileTool(context),
+    uploadOneDriveFile: createUploadOneDriveFileTool(
+      context,
+      sensitive("uploadOneDriveFile")
+    ),
+    deleteOneDriveItem: createDeleteOneDriveItemTool(
+      context,
+      sensitive("deleteOneDriveItem")
+    ),
+    shareOneDriveItem: createShareOneDriveItemTool(
+      context,
+      sensitive("shareOneDriveItem")
+    ),
+    moveOneDriveItem: createMoveOneDriveItemTool(
+      context,
+      sensitive("moveOneDriveItem")
+    ),
+    copyOneDriveItem: createCopyOneDriveItemTool(context),
+    createOneDriveFolder: createCreateOneDriveFolderTool(context),
+    searchM365: createSearchM365Tool(context),
+    listOutlookContacts: createListOutlookContactsTool(context),
+    searchOutlookContacts: createSearchOutlookContactsTool(context),
+    getOutlookContact: createGetOutlookContactTool(context),
+    createOutlookContact: createCreateOutlookContactTool(
+      context,
+      sensitive("createOutlookContact")
+    ),
+    updateOutlookContact: createUpdateOutlookContactTool(
+      context,
+      sensitive("updateOutlookContact")
+    ),
+    deleteOutlookContact: createDeleteOutlookContactTool(
+      context,
+      sensitive("deleteOutlookContact")
+    ),
+    listOutlookContactFolders: createListOutlookContactFoldersTool(context),
+    createOutlookContactFolder: createCreateOutlookContactFolderTool(context),
+    listTodoLists: createListTodoListsTool(context),
+    createTodoList: createCreateTodoListTool(context),
+    getTodoList: createGetTodoListTool(context),
+    updateTodoList: createUpdateTodoListTool(context),
+    deleteTodoList: createDeleteTodoListTool(
+      context,
+      sensitive("deleteTodoList")
+    ),
+    listTodoTasks: createListTodoTasksTool(context),
+    createTodoTask: createCreateTodoTaskTool(
+      context,
+      sensitive("createTodoTask")
+    ),
+    getTodoTask: createGetTodoTaskTool(context),
+    updateTodoTask: createUpdateTodoTaskTool(
+      context,
+      sensitive("updateTodoTask")
+    ),
+    deleteTodoTask: createDeleteTodoTaskTool(
+      context,
+      sensitive("deleteTodoTask")
+    ),
+    listTodoChecklist: createListTodoChecklistTool(context),
+    addTodoChecklistItem: createAddTodoChecklistItemTool(
+      context,
+      sensitive("addTodoChecklistItem")
+    ),
+    updateTodoChecklistItem: createUpdateTodoChecklistItemTool(
+      context,
+      sensitive("updateTodoChecklistItem")
     ),
     scheduleTask: createScheduleTaskTool(context),
     createEventTrigger: createEventTriggerTool(context),
@@ -196,10 +587,11 @@ export function streamChatResponse({
     messages,
     tools: buildTools(context),
     stopWhen: isStepCount(10),
-    onStepFinish: ({ text, toolCalls, toolResults }) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onStepFinish: ({ text, toolCalls, toolResults }: any) => {
       steps.push({
         text,
-        toolCalls: toolCalls.map((call, i) => ({
+        toolCalls: toolCalls.map((call: any, i: number) => ({
           toolName: call.toolName,
           args: call.input,
           result: toolResults[i]?.output ?? null,

@@ -1,6 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
-import { filterMatchesCondition } from "@repo/agent";
+import { filterMatchesCondition, routeEventToPath } from "@repo/agent";
 import type { AutomationType } from "@repo/shared";
+import { doesEventMatchFilter } from "@repo/shared";
+import type { EventTriggerPath } from "@repo/shared";
 import { runAutomationTurn, type AutomationRunResult } from "./automation-runner";
 
 export interface AutomationPayload {
@@ -13,6 +15,8 @@ export interface AutomationPayload {
   triggerId?: string;
   taskId?: string;
   condition?: string;
+  /** Multi-path routing for event triggers (replaces condition + instructions). */
+  paths?: EventTriggerPath[];
 }
 
 export type DispatchOutcome =
@@ -39,6 +43,7 @@ export async function runAutomationPayload(
     triggerId,
     taskId,
     condition,
+    paths,
   } = payload;
 
   const supabase = createClient(
@@ -50,9 +55,46 @@ export async function runAutomationPayload(
     sessionType === "cron" ? "scheduled_task" : "event_trigger";
   const automationId = (sessionType === "cron" ? taskId : triggerId) ?? "";
 
-  // Events: semantic pre-filter (cheap) then dedupe, before running the agent.
+  // Which instructions drive the agent for this event. Multi-path triggers
+  // route to a path: fields-mode paths match deterministically (cheap, no AI);
+  // ai-mode paths are all evaluated by ONE model call that picks the path
+  // (not yes/no). No path matched -> skip.
+  let resolvedInstructions = instructions;
+
   if (sessionType === "event") {
-    if (condition) {
+    if (paths && paths.length > 0) {
+      let selected: EventTriggerPath | null = null;
+      const aiPaths: EventTriggerPath[] = [];
+
+      for (const p of paths) {
+        const mode = p.filter?.mode;
+        if (mode === "fields" || mode === undefined) {
+          // No filter / empty fields = always match (cheap deterministic path).
+          if (doesEventMatchFilter(eventData, p.filter?.fields ?? {})) {
+            selected = p;
+            break;
+          }
+        } else {
+          aiPaths.push(p);
+        }
+      }
+
+      if (!selected && aiPaths.length > 0) {
+        try {
+          const { pathId } = await routeEventToPath(aiPaths, eventData);
+          if (pathId) {
+            selected = aiPaths.find((p) => p.id === pathId) ?? null;
+          }
+        } catch (err) {
+          console.error("[automation-dispatch] Path routing failed:", err);
+        }
+      }
+
+      if (!selected) {
+        return { status: "skipped", reason: "no_path_matched" };
+      }
+      resolvedInstructions = selected.instructions;
+    } else if (condition) {
       try {
         const { matches } = await filterMatchesCondition(condition, eventData);
         if (!matches) {
@@ -108,8 +150,8 @@ export async function runAutomationPayload(
       role: "user",
       content:
         eventData !== undefined
-          ? `${instructions}\n\nEvent data: ${JSON.stringify(eventData)}`
-          : instructions,
+          ? `${resolvedInstructions}\n\nEvent data: ${JSON.stringify(eventData)}`
+          : resolvedInstructions,
     },
   ];
 

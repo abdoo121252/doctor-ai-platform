@@ -24,6 +24,56 @@ export async function PATCH(
     if (body.filter_rules !== undefined) updates.filter_rules = body.filter_rules;
     if (body.condition !== undefined) updates.condition = body.condition;
 
+    if (body.paths !== undefined) {
+      if (!Array.isArray(body.paths) || body.paths.length === 0) {
+        return NextResponse.json(
+          { error: "paths must be a non-empty array" },
+          { status: 400 }
+        );
+      }
+      for (const p of body.paths) {
+        if (typeof p?.instructions !== "string" || p.instructions.trim() === "") {
+          return NextResponse.json(
+            { error: "each path must have non-empty instructions" },
+            { status: 400 }
+          );
+        }
+        const f = p.filter;
+        if (f !== undefined && (typeof f !== "object" || f === null || Array.isArray(f))) {
+          return NextResponse.json(
+            { error: "path.filter must be an object" },
+            { status: 400 }
+          );
+        }
+        if (f !== undefined) {
+          if (f.mode !== "fields" && f.mode !== "ai") {
+            return NextResponse.json(
+              { error: "path.filter.mode must be 'fields' or 'ai'" },
+              { status: 400 }
+            );
+          }
+          if (f.mode === "ai" && typeof f.condition !== "string") {
+            return NextResponse.json(
+              { error: "path.filter.condition must be a string for ai mode" },
+              { status: 400 }
+            );
+          }
+        }
+      }
+      const normalizedPaths = body.paths.map((p: any) => ({
+        id: p.id ?? crypto.randomUUID(),
+        name: p.name,
+        filter:
+          p.filter && p.filter.mode
+            ? p.filter
+            : { mode: "fields", fields: p.filter?.fields ?? {} },
+        instructions: p.instructions,
+      }));
+      updates.paths = normalizedPaths;
+      // Keep legacy instructions in sync with first path for display
+      updates.instructions = normalizedPaths[0].instructions;
+    }
+
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 });
     }

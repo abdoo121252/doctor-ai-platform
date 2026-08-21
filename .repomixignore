@@ -1,0 +1,15 @@
+node_modules/
+.git/
+.next/
+dist/
+.turbo/
+.trigger/
+logs/
+.env
+.env.*
+client_secret_*.json
+pnpm-lock.yaml
+package-lock.json
+*.html
+*.tsbuildinfo
+scripts/
